@@ -506,7 +506,7 @@ final class LiveActivityManager {
     
     func publishLiveActivityAnalytics(_ analytics: ChargingAnalyticsStore) {
         let rawETA = analytics.timeToFullMinutes
-        let rawW = BatteryTrackingManager.shared.currentWatts
+        let rawW = ChargeEstimator.shared.current?.watts ?? BatteryTrackingManager.shared.currentWatts
         
         let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let isChg = BatteryTrackingManager.shared.isCharging
@@ -835,7 +835,7 @@ final class LiveActivityManager {
 
         // Use default values for first content
         let rawETA: Int? = nil
-        let rawW = BatteryTrackingManager.shared.currentWatts
+        let rawW = ChargeEstimator.shared.current?.watts ?? BatteryTrackingManager.shared.currentWatts
         let isWarmFromEstimator = ChargeEstimator.shared.current?.isInWarmup ?? false
 
         // 🔥 Warmup override just for the first push
@@ -879,7 +879,7 @@ final class LiveActivityManager {
         
         // Use default values since we don't have access to analytics store here
         let rawETA: Int? = nil
-        let rawW = BatteryTrackingManager.shared.currentWatts
+        let rawW = ChargeEstimator.shared.current?.watts ?? BatteryTrackingManager.shared.currentWatts
         let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
         

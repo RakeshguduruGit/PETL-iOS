@@ -56,7 +56,26 @@ final class ChargeEstimator {
         self.window.removeAll()
         self.alpha = 1.0
         self.lastETA = nil
-        recompute(now: at, sysPct: startPct)
+        
+        // Force 10W + theory during warmup and publish immediately
+        current = Current(
+            computedAt: at,
+            level01: Double(startPct)/100.0,
+            watts: 10.0,
+            isInWarmup: true,
+            phase: (startPct >= 80 ? .trickle : .warmup)
+        )
+        
+        let minutes = theoreticalMinutesToFull(socPercent: startPct)
+        let t1 = theoreticalMinutesPer1pct(atSOC: startPct)
+        let est = ChargeEstimate(
+            computedAt: at,
+            pctPerMin: 1.0 / max(0.1, t1),
+            minutesToFull: minutes,
+            level01: Double(startPct)/100.0
+        )
+        lastEstimate = est
+        estimateSubject.send(est)
     }
 
     func noteBattery(levelPercent: Int, at: Date = Date()) {
@@ -90,6 +109,13 @@ final class ChargeEstimator {
         lastEstimate = nil
         lastETA = nil
         alpha = 1.0
+    }
+
+    // Public theory helper for store fallback (rarely used)
+    func theoreticalMinutesToFull(socPercent: Int) -> Int {
+        let t1 = theoreticalMinutesPer1pct(atSOC: socPercent)
+        let eta = Double(max(0, 100 - socPercent)) * t1
+        return Int(round(eta))
     }
 
     func updateFromRateEstimator(_ out: ChargingRateEstimator.Output) {
@@ -171,8 +197,8 @@ final class ChargeEstimator {
         }()
         lastETA = etaClamped
 
-        // Effective power: ratio of theoretical 1% mins vs measured
-        let pEff: Double = {
+        // Force 10W during warmup, otherwise use effective power
+        let watts: Double = inWarmup ? 10.0 : {
             if let t_meas, t_meas > 0 { return pNom * (theory1pct / t_meas) }
             return pNom
         }()
@@ -180,18 +206,20 @@ final class ChargeEstimator {
         current = Current(
             computedAt: now,
             level01: Double(sysPct) / 100.0,
-            watts: max(0, pEff),
+            watts: max(0, watts),
             isInWarmup: inWarmup,
             phase: inTrickle ? .trickle : (inWarmup ? .warmup : .active)
         )
 
         let ppm = 60.0 / max(0.1, t_eff)
-        estimateSubject.send(.init(
+        let est = ChargeEstimate(
             computedAt: now,
             pctPerMin: ppm,
             minutesToFull: etaClamped,
             level01: Double(sysPct) / 100.0
-        ))
+        )
+        lastEstimate = est
+        estimateSubject.send(est)
     }
 
     private func theoreticalMinutesPer1pct(atSOC soc: Int) -> Double {

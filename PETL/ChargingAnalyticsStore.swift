@@ -40,12 +40,23 @@ final class ChargingAnalyticsStore: ObservableObject {
     private func ingest(estimate est: ChargeEstimator.ChargeEstimate) {
         let now = est.computedAt
 
-        // derive characteristic from the unified rate
+        // Compute isActive with an estimator check (covers bouncy state transitions)
+        let isCharging = BatteryTrackingManager.shared.isCharging
+        let isActive = isCharging || (ChargeEstimator.shared.current != nil)
+
+        // Use canonical watts so card matches LA/DB
         let label = ChargingAnalytics.label(forPctPerMinute: est.pctPerMin)
         let wattsStr = String(format: "%.1fW", BatteryTrackingManager.shared.currentWatts)
 
-        // Check if charging based on BatteryTrackingManager (not from estimate)
-        let isCharging = BatteryTrackingManager.shared.isCharging
+        // Guarantee minutes while active. If est.minutesToFull == nil, fall back to last known (or theory) so we never show "—" mid-charge
+        let minutes: Int = {
+            if let m = est.minutesToFull { return m }
+            if let m = lastKnownMinutes { return m }
+            // last resort: theory (should almost never run once estimator is fixed)
+            return ChargeEstimator.shared.theoreticalMinutesToFull(
+                socPercent: Int((est.level01 * 100).rounded())
+            )
+        }()
 
         if isCharging && !wasCharging {
             // New plug-in: drop any previous grace so we never show old minutes.
@@ -56,26 +67,23 @@ final class ChargingAnalyticsStore: ObservableObject {
         }
         wasCharging = isCharging
 
-        if isCharging {
-            // update live + cache for grace period
-            timeToFullMinutes = est.minutesToFull
+        if isActive {
+            timeToFullMinutes = minutes
             characteristicLabel = label
             characteristicWatts = wattsStr
             hasEverComputed = true
-            lastKnownMinutes = est.minutesToFull
+            lastKnownMinutes = minutes
             lastKnownLabel = label
             lastKnownWatts = wattsStr
-            lastPluggedAt = now
+            if isCharging && lastPluggedAt == nil { lastPluggedAt = est.computedAt }
         } else {
-            // not charging: show the last known values for a short grace window
-            // so the card doesn't flicker to "..."
-            let withinGrace = (lastPluggedAt == nil) ? false : (now.timeIntervalSince(lastPluggedAt!) < 20)
+            // Truly idle (no active estimator and not charging)
+            let withinGrace = (lastPluggedAt.map { est.computedAt.timeIntervalSince($0) < 20 } ?? false)
             if withinGrace, let m = lastKnownMinutes {
                 timeToFullMinutes = m
                 characteristicLabel = lastKnownLabel
                 characteristicWatts = lastKnownWatts
             } else {
-                // truly not charging and grace expired: blank out
                 timeToFullMinutes = nil
                 characteristicLabel = "—"
                 characteristicWatts = "—"

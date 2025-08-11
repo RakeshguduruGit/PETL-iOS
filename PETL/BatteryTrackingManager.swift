@@ -115,7 +115,12 @@ final class BatteryTrackingManager: ObservableObject {
 
     
     // Public accessor for current smoothed watts (for Live Activity)
-    var currentWatts: Double { lastDisplayed.watts }
+    var currentWatts: Double {
+        if FeatureFlags.smoothChargingAnalytics, let w = ChargeEstimator.shared.current?.watts {
+            return w
+        }
+        return lastDisplayed.watts
+    }
     
     // MARK: - DB Reading Helpers for Charts
     func historyPointsFromDB(hours: Int = 24) -> [BatteryDataPoint] {
@@ -445,6 +450,16 @@ final class BatteryTrackingManager: ObservableObject {
                            String(describing: o.confidence),
                            o.dataGap ? "true" : "false",
                            tickToken), now: now)
+
+        // Runtime SSOT guard (helps catch future regressions)
+        #if DEBUG
+        if FeatureFlags.smoothChargingAnalytics, let ce = ChargeEstimator.shared.current {
+            let diff = abs(currentWatts - ce.watts)
+            if diff > 0.2 {
+                addToAppLogs("🧭 SSOT WARN — watts diverged; BTM=\(String(format:"%.2f", currentWatts)) vs CE=\(String(format:"%.2f", ce.watts))")
+            }
+        }
+        #endif
 
         // Phase 2.7: ETA source + timestamp in logs (debug clarity)
         if let eta = displayETA {
