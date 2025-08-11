@@ -48,26 +48,22 @@ final class ChargingAnalyticsStore: ObservableObject {
         let label = ChargingAnalytics.label(forPctPerMinute: est.pctPerMin)
         let wattsStr = String(format: "%.1fW", BatteryTrackingManager.shared.currentWatts)
 
-        // Guarantee minutes while active. If est.minutesToFull == nil, fall back to last known (or theory) so we never show "—" mid-charge
-        let minutes: Int = {
-            if let m = est.minutesToFull { return m }
-            if let m = lastKnownMinutes { return m }
-            // last resort: theory (should almost never run once estimator is fixed)
-            return ChargeEstimator.shared.theoreticalMinutesToFull(
-                socPercent: Int((est.level01 * 100).rounded())
-            )
-        }()
-
         if isCharging && !wasCharging {
-            // New plug-in: drop any previous grace so we never show old minutes.
-            lastKnownMinutes = nil
-            lastKnownLabel = "—"
-            lastKnownWatts = "—"
+            // New plug-in: keep lastKnown values until the first new estimate lands.
+            // Just mark the moment for grace timing; do NOT clear the cache here.
             lastPluggedAt = now
         }
         wasCharging = isCharging
 
         if isActive {
+            // 3-way fallback so it never goes nil
+            let sysPct = Int(BatteryTrackingManager.shared.level * 100)
+            let minutes: Int = {
+                if let m = est.minutesToFull { return m }                       // fresh
+                if let m = lastKnownMinutes { return m }                        // cache
+                return ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct) // theory
+            }()
+
             timeToFullMinutes = minutes
             characteristicLabel = label
             characteristicWatts = wattsStr
@@ -75,7 +71,7 @@ final class ChargingAnalyticsStore: ObservableObject {
             lastKnownMinutes = minutes
             lastKnownLabel = label
             lastKnownWatts = wattsStr
-            if isCharging && lastPluggedAt == nil { lastPluggedAt = est.computedAt }
+            lastPluggedAt = now
         } else {
             // Truly idle (no active estimator and not charging)
             let withinGrace = (lastPluggedAt.map { est.computedAt.timeIntervalSince($0) < 20 } ?? false)

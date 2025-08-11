@@ -452,9 +452,11 @@ final class LiveActivityManager {
         
         guard canPush else { return }
 
-        let rawETA = estimate.minutesToFull ?? 0
-        let rawW   = BatteryTrackingManager.shared.currentWatts
         let sysPct = Int(BatteryTrackingManager.shared.level * 100)
+        let rawETA = estimate.minutesToFull
+                  ?? ETAPresenter.shared.lastStableMinutes
+                  ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
+        let rawW   = BatteryTrackingManager.shared.currentWatts
         let isChg  = BatteryTrackingManager.shared.isCharging
         let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
         let token  = BatteryTrackingManager.shared.tickToken
@@ -505,10 +507,12 @@ final class LiveActivityManager {
     }
     
     func publishLiveActivityAnalytics(_ analytics: ChargingAnalyticsStore) {
+        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let rawETA = analytics.timeToFullMinutes
+                  ?? ETAPresenter.shared.lastStableMinutes
+                  ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
         let rawW = ChargeEstimator.shared.current?.watts ?? BatteryTrackingManager.shared.currentWatts
         
-        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let isChg = BatteryTrackingManager.shared.isCharging
         let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
         
