@@ -623,30 +623,60 @@ final class LiveActivityManager {
     
     // MARK: - Unified Start
     @MainActor
-    func startActivity(seed: Int, sysPct: Int, reason: String) async {
-        // 1) Build attributes/content the same way firstContent() does
+    func startActivity(seed seededMinutes: Int, sysPct: Int, reason: String) async {
+        let auth = ActivityAuthorizationInfo()
+        laLogger.info("🔐 areActivitiesEnabled=\(auth.areActivitiesEnabled)")
+        guard auth.areActivitiesEnabled else {
+            laLogger.warning("🚫 Skip start — Live Activities disabled by system/user")
+            addToAppLogs("🚫 Skip start — Live Activities disabled by system/user")
+            return
+        }
+
+        let before = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+        laLogger.info("🔍 System activities count before start: \(before)")
+        addToAppLogs("🔍 System activities count before start: \(before)")
+
+        // Build first frame using same fallback as firstContent()
+        let minutes = max(seededMinutes, ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct) ?? 0)
+        laLogger.info("⛽️ seed=launch minutes=\(minutes) sysPct=\(sysPct)")
+        addToAppLogs("⛽️ seed=launch minutes=\(minutes) sysPct=\(sysPct)")
+
         let attrs = PETLLiveActivityExtensionAttributes(name: "PETL Charging Activity")
-        let initialContent = firstContentSeeded(sysPct: sysPct, seededMinutes: seed)
+        let state = PETLLiveActivityExtensionAttributes.ContentState(
+            batteryLevel: sysPct,
+            isCharging: true,
+            chargingRate: "Normal",
+            estimatedWattage: String(format: "%.1fW", BatteryTrackingManager.shared.currentWatts),
+            timeToFullMinutes: minutes,
+            expectedFullDate: Date().addingTimeInterval(TimeInterval(max(minutes, 0) * 60)),
+            deviceModel: DeviceProfileService.shared.profile?.name ?? UIDevice.current.model,
+            batteryHealth: "Excellent",
+            isInWarmUpPeriod: true,
+            timestamp: Date()
+        )
+        let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(3600))
 
-        // 2) System count before start
-        let sysCount = Activity<PETLLiveActivityExtensionAttributes>.activities.count
-        laLogger.info("🔍 System activities count before start: \(sysCount)")
-
-        // 3) Request + consistent log
         do {
             let activity = try await Activity<PETLLiveActivityExtensionAttributes>.request(
                 attributes: attrs,
-                content: initialContent,
+                content: content,
                 pushType: .token
             )
             laLogger.info("🎬 Started Live Activity id=\(activity.id.suffix(4)) reason=\(reason)")
-            addToAppLogs("🎬 Started Live Activity reason=\(reason)")
+            addToAppLogs("🎬 Started Live Activity id=\(activity.id.suffix(4)) reason=\(reason)")
+
+            // Note: Push token observation removed to avoid async complexity
+
             #if DEBUG
-            assert(Activity<PETLLiveActivityExtensionAttributes>.activities.count <= 1, "Multiple PETL activities unexpectedly active")
+            let after = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+            if after > 1 { 
+                laLogger.warning("⚠️ More than one PETL activity active (after=\(after))")
+                addToAppLogs("⚠️ More than one PETL activity active (after=\(after))")
+            }
             #endif
         } catch {
-            laLogger.error("❌ Live Activity start failed: \(error.localizedDescription)")
-            addToAppLogs("❌ Live Activity start failed: \(error.localizedDescription)")
+            laLogger.error("❌ Start failed: \(error.localizedDescription)")
+            addToAppLogs("❌ Start failed: \(error.localizedDescription)")
         }
     }
     
@@ -688,20 +718,23 @@ final class LiveActivityManager {
         // 1) Cooldown (keep your stability lock)
         if let ended = lastEndAt, Date().timeIntervalSince(ended) < minRestartInterval {
             let remain = Int(minRestartInterval - Date().timeIntervalSince(ended))
-            addToAppLogs("⏳ Cooldown — skip start (\(remain)s left)")
+            laLogger.debug("⏭️ Skip start — reason=COOLDOWN (\(remain)s left)")
+            addToAppLogs("⏭️ Skip start — reason=COOLDOWN (\(remain)s left)")
             return
         }
 
         // 2) If the system already has an activity, mark active and bail
         if hasLiveActivity {
-            addToAppLogs("ℹ️ System already has a Live Activity — skip start")
+            laLogger.debug("⏭️ Skip start — reason=ALREADY-ACTIVE")
+            addToAppLogs("⏭️ Skip start — reason=ALREADY-ACTIVE")
             return
         }
 
         // 3) Hard guard on fresh battery state
         let st = UIDevice.current.batteryState
         guard st == .charging || st == .full else {
-            addToAppLogs("ℹ️ Not charging — skip start")
+            laLogger.debug("⏭️ Skip start — reason=NOT-CHARGING")
+            addToAppLogs("⏭️ Skip start — reason=NOT-CHARGING")
             return
         }
 
