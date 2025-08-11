@@ -604,19 +604,10 @@ final class LiveActivityManager {
     @MainActor
     func debugForceStart() async {
         addToAppLogs("🛠️ debugForceStart()")
-        do {
-            let id = try await Activity.request(
-                attributes: PETLLiveActivityExtensionAttributes(name: "PETL Debug"),
-                content: ActivityContent(
-                    state: firstContent(),
-                    staleDate: Date().addingTimeInterval(600)
-                ),
-                pushType: nil // force local-only; card should still appear
-            ).id
-            addToAppLogs("✅ debugForceStart created id=\(id.prefix(6))")
-        } catch {
-            addToAppLogs("❌ debugForceStart failed: \(error.localizedDescription)")
-        }
+        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
+        let seed = ETAPresenter.shared.lastStableMinutes
+               ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
+        await startActivity(seed: seed, sysPct: sysPct, reason: "debug-force")
     }
     
     private func updateHasActiveWidget() {

@@ -619,6 +619,7 @@ final class BatteryTrackingManager: ObservableObject {
     
     // MARK: - Charging Session Management
     private var endDebounce: DispatchWorkItem?
+    private var unplugDebounceTask: Task<Void, Never>?
 
     private func handleChargingTransition(isCharging: Bool) {
         if FeatureFlags.smoothChargingAnalytics {
@@ -632,26 +633,7 @@ final class BatteryTrackingManager: ObservableObject {
             // Transition: charging → NOT charging
             if !isCharging && wasCharging {
                 endDebounce?.cancel()
-                let work = DispatchWorkItem { [weak self] in
-                    guard let self else { return }
-                    // Re-check state after debounce window
-                    let stillUnplugged = UIDevice.current.batteryState == .unplugged
-                                      || UIDevice.current.batteryState == .unknown
-                    if stillUnplugged {
-                        self.endEstimatorIfNeeded()
-                        self.sessionActive = false
-                        
-                        // Robust Live Activity end with debounce
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s debounce
-                            if !self.isCharging { // still unplugged
-                                await LiveActivityManager.shared.endAll("unplugged")
-                            }
-                        }
-                    }
-                }
-                endDebounce = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: work)  // 5s debounce
+                handleUnplugDetected()
             }
             
             wasCharging = isCharging
@@ -711,6 +693,26 @@ final class BatteryTrackingManager: ObservableObject {
         guard FeatureFlags.smoothChargingAnalytics else { return }
         ChargeEstimator.shared.endSession(at: Date())
         addToAppLogs("🛑 Charge end — estimator cleared")
+    }
+    
+    func handleUnplugDetected() {
+        // If we already scheduled a debounce, skip
+        if unplugDebounceTask != nil { return }
+
+        unplugDebounceTask = Task { [weak self] in
+            // Wait ~0.8s to confirm it wasn't a glitch
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard let self else { return }
+            if self.isCharging == false {
+                addToAppLogs("🧯 Unplug confirmed (debounced) — ending activities")
+                await LiveActivityManager.shared.endAll("debounced-unplug")
+                ChargeEstimator.shared.endSession(at: Date())
+                addToAppLogs("🛑 Charge end — estimator cleared")
+            } else {
+                addToAppLogs("🔁 Unplug canceled — device back to charging during debounce")
+            }
+            self.unplugDebounceTask = nil
+        }
     }
     
     private func tickEstimator(systemPercent: Int, isCharging: Bool) {
