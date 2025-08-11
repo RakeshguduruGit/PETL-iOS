@@ -402,12 +402,7 @@ final class LiveActivityManager {
                 }
                 osLogger.info("▶️ Remote start honored (seq=\(seq))")
                 Task { 
-                    let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-                    let seed = ETAPresenter.shared.lastStableMinutes
-                           ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
-                    DispatchQueue.main.async {
-                        self.startActivity(seed: seed, sysPct: sysPct, reason: .snapshot)
-                    }
+                    await self.startActivity(reason: .snapshot)
                 }
             } else {
                 osLogger.info("🚫 Remote start ignored (local not charging, seq=\(seq))")
@@ -442,12 +437,7 @@ final class LiveActivityManager {
             startsRequested += 1
             if !hasLiveActivity {
                 Task { 
-                    let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-                    let seed = ETAPresenter.shared.lastStableMinutes
-                           ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
-                    DispatchQueue.main.async {
-                        self.startActivity(seed: seed, sysPct: sysPct, reason: .snapshot)
-                    }
+                    await self.startActivity(reason: .snapshot)
                 }
             }
         } else {
@@ -631,24 +621,14 @@ final class LiveActivityManager {
         let st = UIDevice.current.batteryState
         guard (st == .charging || st == .full), !hasLiveActivity else { return }
         Task { 
-            let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-            let seed = ETAPresenter.shared.lastStableMinutes
-                   ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
-            DispatchQueue.main.async {
-                self.startActivity(seed: seed, sysPct: sysPct, reason: .launch)
-            }
+            await self.startActivity(reason: .launch)
         }
     }
     
     @MainActor
     func debugForceStart() async {
         addToAppLogs("🛠️ debugForceStart()")
-        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-        let seed = ETAPresenter.shared.lastStableMinutes
-               ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
-        DispatchQueue.main.async {
-            self.startActivity(seed: seed, sysPct: sysPct, reason: .debug)
-        }
+        await startActivity(reason: .debug)
     }
     
     private func updateHasActiveWidget() {
@@ -673,7 +653,7 @@ final class LiveActivityManager {
     }
 
     @MainActor
-    func startActivity(seed seededMinutes: Int, sysPct: Int, reason: LAStartReason) {
+    private func startActivity(seed seededMinutes: Int, sysPct: Int, reason: LAStartReason) {
         addToAppLogs("🧵 startActivity(seed) reason=\(reason.rawValue) mainThread=\(Thread.isMainThread) seed=\(seededMinutes) sysPct=\(sysPct)")
 
         let auth = ActivityAuthorizationInfo()
@@ -747,45 +727,51 @@ final class LiveActivityManager {
     // Wrapper that computes seed/sysPct then delegates
 @MainActor
 func startActivity(reason: LAStartReason) async {
-    // 0) Self-heal: if we *think* we're active but the system says otherwise, clear it
+    // 0) Thrash guard to prevent back-to-back starts
+    if let t = lastStartAt, Date().timeIntervalSince(t) < 2 {
+        addToAppLogs("⏭️ Skip start — THRASH-GUARD (<2s since last)")
+        return
+    }
+
+    // 1) Self-heal: if we *think* we're active but the system says otherwise, clear it
     if isActive && !hasLiveActivity {
         laLogger.warning("⚠️ isActive desynced (system has 0). Resetting.")
         isActive = false
     }
 
-    // 1) Cooldown (keep your stability lock)
+    // 2) Cooldown (keep your stability lock)
     if let ended = lastEndAt, Date().timeIntervalSince(ended) < minRestartInterval {
         let remain = Int(minRestartInterval - Date().timeIntervalSince(ended))
-        addToAppLogs("⏭️ Skip start — reason=COOLDOWN (\(remain)s left)")
+        addToAppLogs("⏭️ Skip start — COOLDOWN (\(remain)s left)")
         return
     }
 
-    // 2) If the system already has an activity, mark active and bail
+    // 3) If the system already has an activity, mark active and bail
     if hasLiveActivity {
-        addToAppLogs("⏭️ Skip start — reason=ALREADY-ACTIVE")
+        addToAppLogs("⏭️ Skip start — ALREADY-ACTIVE")
         return
     }
 
-    // 3) Hard guard on fresh battery state
+    // 4) Hard guard on fresh battery state
     let st = UIDevice.current.batteryState
     guard st == .charging || st == .full else {
-        addToAppLogs("⏭️ Skip start — reason=NOT-CHARGING")
+        addToAppLogs("⏭️ Skip start — NOT-CHARGING")
         return
     }
 
-    // 4) Call the unified start method
+    // 5) Call the unified start method
     let sysPct = Int(BatteryTrackingManager.shared.level * 100)
     let seed = ETAPresenter.shared.lastStableMinutes
            ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
            ?? 0
-    addToAppLogs("➡️ delegating to seed requester reason=\(reason.rawValue)")
+    addToAppLogs("➡️ delegating to seeded start reason=\(reason.rawValue)")
     startActivity(seed: seed, sysPct: sysPct, reason: reason)
     
-    // 5) Update state after successful start
+    // 6) Update state after successful start
     if hasLiveActivity {
         startsSucceeded += 1
         isActive = true
-        lastStartAt = Date()
+        lastStartAt = Date()  // Set for thrash guard
         cleanupDuplicates(keepId: Activity<PETLLiveActivityExtensionAttributes>.activities.first?.id ?? "")
         dumpActivities("post-start")
         cancelEndWatchdog()
@@ -802,12 +788,7 @@ func startActivity(reason: LAStartReason) async {
     func startWarmIfNeeded() async {
         // Make the *first* content act like warmup so it bypasses clamps
         forceWarmupNextPush = true
-        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-        let seed = ETAPresenter.shared.lastStableMinutes
-               ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
-        DispatchQueue.main.async {
-            self.startActivity(seed: seed, sysPct: sysPct, reason: .chargeBegin)
-        }
+        await startActivity(reason: .chargeBegin)
     }
     
     @MainActor
