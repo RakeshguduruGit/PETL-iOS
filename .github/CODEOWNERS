@@ -1,0 +1,14 @@
+# Require review before changes to stability-critical files
+/PETL/BatteryTrackingManager.swift   @rakeshguduru
+/PETL/ChargeDB.swift                 @rakeshguduru
+/PETL/LiveActivityManager.swift      @rakeshguduru
+/PETL/ContentView.swift              @rakeshguduru
+/PETL/ChargingPowerBarsChart.swift   @rakeshguduru
+
+# Test files for stability validation
+/PETL/PowerPersistenceTests.swift    @rakeshguduru
+/PETL/NotificationCoalescingTests.swift @rakeshguduru
+
+# Stability documentation
+/README_STABILITY.md                 @rakeshguduru
+/scripts/guardrails.sh               @rakeshguduru

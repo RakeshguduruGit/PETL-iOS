@@ -1,0 +1,35 @@
+---
+alwaysApply: true
+---
+
+Log Philosophy & Audience - Who reads what logs and core principles
+Logging Channels & Locations - Complete mapping of all log sources
+Canonical Log Strings - Exact emoji + text for all 16 log types (alphabetical)
+Life-Cycle Example Trace - Real cold-launch → plug → jiggle → unplug sequence
+Log-Emission Rules - Unconditional vs DEBUG-only guidelines
+Token & Session IDs - Debug token generation and session management
+Adding New Log Lines - 5-step checklist + reserved emoji guide
+Throttling & Noise Control - All current throttling mechanisms documented
+Release-Build Differences - DEBUG compilation and TestFlight verification
+Troubleshooting Guide - 6 common issues with causes and fixes
+Contract Established:
+Never remove unconditional logs - they're the diagnostic contract
+Unique emojis prevent confusion - reserved prefix system documented
+Session tokens enable tracing - debugToken appears in both console & Info tab
+Throttling prevents spam - 30s snapshots, 60s pushes, 5s gate-busy limits
+The specification serves as both documentation for current contributors and implementation guide for recreating the identical log stream in another codebase.Log Philosophy & Audience - Who reads what logs and core principles
+Logging Channels & Locations - Complete mapping of all log sources
+Canonical Log Strings - Exact emoji + text for all 16 log types (alphabetical)
+Life-Cycle Example Trace - Real cold-launch → plug → jiggle → unplug sequence
+Log-Emission Rules - Unconditional vs DEBUG-only guidelines
+Token & Session IDs - Debug token generation and session management
+Adding New Log Lines - 5-step checklist + reserved emoji guide
+Throttling & Noise Control - All current throttling mechanisms documented
+Release-Build Differences - DEBUG compilation and TestFlight verification
+Troubleshooting Guide - 6 common issues with causes and fixes
+Contract Established:
+Never remove unconditional logs - they're the diagnostic contract
+Unique emojis prevent confusion - reserved prefix system documented
+Session tokens enable tracing - debugToken appears in both console & Info tab
+Throttling prevents spam - 30s snapshots, 60s pushes, 5s gate-busy limits
+The specification serves as both documentation for current contributors and implementation guide for recreating the identical log stream in another codebase.

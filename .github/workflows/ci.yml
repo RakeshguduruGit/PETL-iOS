@@ -1,0 +1,34 @@
+name: CI
+on: [pull_request, push]
+
+jobs:
+  guardrails:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guardrails
+        run: |
+          chmod +x scripts/guardrails.sh
+          ./scripts/guardrails.sh
+          
+  tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode build & tests
+        run: |
+          xcodebuild -project PETL.xcodeproj -scheme PETL \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -quiet build test
+            
+  swiftlint:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SwiftLint
+        run: |
+          if [ -f swiftlint.yml ]; then
+            swiftlint --config swiftlint.yml
+          else
+            echo "SwiftLint config not found, skipping lint checks"
+          fi

@@ -1,0 +1,83 @@
+# SwiftLint Configuration for PETL Stability Rules
+
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+
+opt_in_rules:
+  - empty_count
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - overridden_super_call
+  - redundant_nil_coalescing
+  - sorted_imports
+  - vertical_parameter_alignment_on_call
+
+# Custom rules to prevent stability regressions
+custom_rules:
+  ban_insertPower_outside_manager:
+    included: ["PETL"]
+    name: "insertPower only from BatteryTrackingManager"
+    regex: 'insertPower\('
+    match_kinds: [identifier]
+    excluded: ["BatteryTrackingManager.swift", ".*Tests\\.swift"]
+    severity: error
+    message: "insertPower() may only be called from BatteryTrackingManager. Use BatteryTrackingManager.persistPowerSample instead."
+
+  ban_powerDBDidChange_subscribers_outside_parent:
+    included: ["PETL"]
+    name: "powerDBDidChange subscriptions only in parent VM"
+    regex: 'powerDBDidChange'
+    excluded: ["ContentView.swift", ".*ChartsVM.*\\.swift", ".*Tests\\.swift"]
+    severity: error
+    message: "Subscribing to .powerDBDidChange is only allowed in ChartsVM/ContentView parent."
+
+  power_chart_must_be_bars:
+    included: ["ChargingPowerBarsChart.swift"]
+    name: "Power chart must use bars"
+    regex: 'LineMark'
+    severity: error
+    message: "Power chart must use bars (BarMark), not lines (LineMark)"
+
+  battery_chart_must_not_be_bars:
+    included: ["SimpleBatteryChart.swift"]
+    name: "Battery chart must not use bars"
+    regex: 'BarMark'
+    severity: error
+    message: "Battery chart must not use bars (BarMark), use LineMark + AreaMark instead"
+
+  ban_direct_chargeDB_access:
+    included: ["PETL"]
+    name: "Direct ChargeDB.shared access only in BatteryTrackingManager"
+    regex: 'ChargeDB\.shared'
+    excluded: ["BatteryTrackingManager.swift", ".*Tests\\.swift"]
+    severity: error
+    message: "Direct ChargeDB.shared access only allowed in BatteryTrackingManager"
+
+  require_stability_fences:
+    included: ["PETL"]
+    name: "Stability-locked code must have fences"
+    regex: 'STABILITY-LOCKED'
+    severity: warning
+    message: "Stability-locked code should be fenced with BEGIN/END STABILITY-LOCKED comments"
+
+# General code quality rules
+line_length:
+  warning: 120
+  error: 150
+
+function_body_length:
+  warning: 50
+  error: 100
+
+type_body_length:
+  warning: 300
+  error: 500
+
+file_length:
+  warning: 500
+  error: 1000
+
+cyclomatic_complexity:
+  warning: 10
+  error: 20

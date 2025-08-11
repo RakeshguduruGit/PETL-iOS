@@ -1,0 +1,615 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		FA7BF7A42E36EB7300B48A29 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA7BF7A32E36EB7300B48A29 /* WidgetKit.framework */; };
+		FA7BF7A62E36EB7300B48A29 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FA7BF7A52E36EB7300B48A29 /* SwiftUI.framework */; };
+		FA7BF7B72E36EB7500B48A29 /* PETLLiveActivityExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FA7BF7A12E36EB7300B48A29 /* PETLLiveActivityExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		FA7BF7C22E36F17E00B48A29 /* OneSignalExtension in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7C12E36F17E00B48A29 /* OneSignalExtension */; };
+		FA7BF7C42E36F17E00B48A29 /* OneSignalFramework in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7C32E36F17E00B48A29 /* OneSignalFramework */; };
+		FA7BF7C62E36F17E00B48A29 /* OneSignalInAppMessages in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7C52E36F17E00B48A29 /* OneSignalInAppMessages */; };
+		FA7BF7C82E36F17E00B48A29 /* OneSignalLocation in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7C72E36F17E00B48A29 /* OneSignalLocation */; };
+		FA7BF7CA2E36F19000B48A29 /* OneSignalExtension in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7C92E36F19000B48A29 /* OneSignalExtension */; };
+		FA7BF7CC2E36F19000B48A29 /* OneSignalFramework in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7CB2E36F19000B48A29 /* OneSignalFramework */; };
+		FA7BF7CE2E36F19000B48A29 /* OneSignalInAppMessages in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7CD2E36F19000B48A29 /* OneSignalInAppMessages */; };
+		FA7BF7D02E36F19000B48A29 /* OneSignalLocation in Frameworks */ = {isa = PBXBuildFile; productRef = FA7BF7CF2E36F19000B48A29 /* OneSignalLocation */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		FA7BF7B52E36EB7500B48A29 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FA7BF7842E36E88800B48A29 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FA7BF7A02E36EB7300B48A29;
+			remoteInfo = PETLLiveActivityExtensionExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		FA7BF7BC2E36EB7500B48A29 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FA7BF7B72E36EB7500B48A29 /* PETLLiveActivityExtensionExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		FA7BF78C2E36E88800B48A29 /* PETL.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PETL.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA7BF7A12E36EB7300B48A29 /* PETLLiveActivityExtensionExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PETLLiveActivityExtensionExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA7BF7A32E36EB7300B48A29 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		FA7BF7A52E36EB7300B48A29 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		FA7BF7BD2E36EC8B00B48A29 /* PETLLiveActivityExtensionExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PETLLiveActivityExtensionExtension.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		FA7BF79C2E36E8FB00B48A29 /* Exceptions for "PETL" folder in "PETL" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FA7BF78B2E36E88800B48A29 /* PETL */;
+		};
+		FA7BF7BB2E36EB7500B48A29 /* Exceptions for "PETLLiveActivityExtension" folder in "PETLLiveActivityExtensionExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = FA7BF7A02E36EB7300B48A29 /* PETLLiveActivityExtensionExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		FA7BF78E2E36E88800B48A29 /* PETL */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FA7BF79C2E36E8FB00B48A29 /* Exceptions for "PETL" folder in "PETL" target */,
+			);
+			path = PETL;
+			sourceTree = "<group>";
+		};
+		FA7BF7A72E36EB7300B48A29 /* PETLLiveActivityExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FA7BF7BB2E36EB7500B48A29 /* Exceptions for "PETLLiveActivityExtension" folder in "PETLLiveActivityExtensionExtension" target */,
+			);
+			path = PETLLiveActivityExtension;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		FA7BF7892E36E88800B48A29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FA7BF7C62E36F17E00B48A29 /* OneSignalInAppMessages in Frameworks */,
+				FA7BF7C42E36F17E00B48A29 /* OneSignalFramework in Frameworks */,
+				FA7BF7C82E36F17E00B48A29 /* OneSignalLocation in Frameworks */,
+				FA7BF7C22E36F17E00B48A29 /* OneSignalExtension in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA7BF79E2E36EB7300B48A29 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FA7BF7CE2E36F19000B48A29 /* OneSignalInAppMessages in Frameworks */,
+				FA7BF7CC2E36F19000B48A29 /* OneSignalFramework in Frameworks */,
+				FA7BF7A62E36EB7300B48A29 /* SwiftUI.framework in Frameworks */,
+				FA7BF7CA2E36F19000B48A29 /* OneSignalExtension in Frameworks */,
+				FA7BF7D02E36F19000B48A29 /* OneSignalLocation in Frameworks */,
+				FA7BF7A42E36EB7300B48A29 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		FA7BF7832E36E88800B48A29 = {
+			isa = PBXGroup;
+			children = (
+				FA7BF7BD2E36EC8B00B48A29 /* PETLLiveActivityExtensionExtension.entitlements */,
+				FA7BF78E2E36E88800B48A29 /* PETL */,
+				FA7BF7A72E36EB7300B48A29 /* PETLLiveActivityExtension */,
+				FA7BF7A22E36EB7300B48A29 /* Frameworks */,
+				FA7BF78D2E36E88800B48A29 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FA7BF78D2E36E88800B48A29 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FA7BF78C2E36E88800B48A29 /* PETL.app */,
+				FA7BF7A12E36EB7300B48A29 /* PETLLiveActivityExtensionExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FA7BF7A22E36EB7300B48A29 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				FA7BF7A32E36EB7300B48A29 /* WidgetKit.framework */,
+				FA7BF7A52E36EB7300B48A29 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		FA7BF78B2E36E88800B48A29 /* PETL */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FA7BF7972E36E88900B48A29 /* Build configuration list for PBXNativeTarget "PETL" */;
+			buildPhases = (
+				FA7BF7882E36E88800B48A29 /* Sources */,
+				FA7BF7892E36E88800B48A29 /* Frameworks */,
+				FA7BF78A2E36E88800B48A29 /* Resources */,
+				FA7BF7BC2E36EB7500B48A29 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FA7BF7B62E36EB7500B48A29 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FA7BF78E2E36E88800B48A29 /* PETL */,
+			);
+			name = PETL;
+			packageProductDependencies = (
+				FA7BF7C12E36F17E00B48A29 /* OneSignalExtension */,
+				FA7BF7C32E36F17E00B48A29 /* OneSignalFramework */,
+				FA7BF7C52E36F17E00B48A29 /* OneSignalInAppMessages */,
+				FA7BF7C72E36F17E00B48A29 /* OneSignalLocation */,
+			);
+			productName = PETL;
+			productReference = FA7BF78C2E36E88800B48A29 /* PETL.app */;
+			productType = "com.apple.product-type.application";
+		};
+		FA7BF7A02E36EB7300B48A29 /* PETLLiveActivityExtensionExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FA7BF7B82E36EB7500B48A29 /* Build configuration list for PBXNativeTarget "PETLLiveActivityExtensionExtension" */;
+			buildPhases = (
+				FA7BF79D2E36EB7300B48A29 /* Sources */,
+				FA7BF79E2E36EB7300B48A29 /* Frameworks */,
+				FA7BF79F2E36EB7300B48A29 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				FA7BF7A72E36EB7300B48A29 /* PETLLiveActivityExtension */,
+			);
+			name = PETLLiveActivityExtensionExtension;
+			packageProductDependencies = (
+				FA7BF7C92E36F19000B48A29 /* OneSignalExtension */,
+				FA7BF7CB2E36F19000B48A29 /* OneSignalFramework */,
+				FA7BF7CD2E36F19000B48A29 /* OneSignalInAppMessages */,
+				FA7BF7CF2E36F19000B48A29 /* OneSignalLocation */,
+			);
+			productName = PETLLiveActivityExtensionExtension;
+			productReference = FA7BF7A12E36EB7300B48A29 /* PETLLiveActivityExtensionExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FA7BF7842E36E88800B48A29 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1640;
+				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					FA7BF78B2E36E88800B48A29 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					FA7BF7A02E36EB7300B48A29 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+				};
+			};
+			buildConfigurationList = FA7BF7872E36E88800B48A29 /* Build configuration list for PBXProject "PETL" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = FA7BF7832E36E88800B48A29;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FA7BF78D2E36E88800B48A29 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FA7BF78B2E36E88800B48A29 /* PETL */,
+				FA7BF7A02E36EB7300B48A29 /* PETLLiveActivityExtensionExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FA7BF78A2E36E88800B48A29 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA7BF79F2E36EB7300B48A29 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FA7BF7882E36E88800B48A29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA7BF79D2E36EB7300B48A29 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		FA7BF7B62E36EB7500B48A29 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FA7BF7A02E36EB7300B48A29 /* PETLLiveActivityExtensionExtension */;
+			targetProxy = FA7BF7B52E36EB7500B48A29 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		FA7BF7952E36E88900B48A29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = MFBFYXVNCP;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		FA7BF7962E36E88900B48A29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = MFBFYXVNCP;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		FA7BF7982E36E88900B48A29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = PETL/PETL.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MFBFYXVNCP;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PETL/Info.plist;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gopetl.PETL;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FA7BF7992E36E88900B48A29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = PETL/PETL.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MFBFYXVNCP;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PETL/Info.plist;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gopetl.PETL;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		FA7BF7B92E36EB7500B48A29 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = PETLLiveActivityExtensionExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MFBFYXVNCP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PETLLiveActivityExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PETLLiveActivityExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gopetl.PETL.PETLLiveActivityExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		FA7BF7BA2E36EB7500B48A29 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = PETLLiveActivityExtensionExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MFBFYXVNCP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PETLLiveActivityExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PETLLiveActivityExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gopetl.PETL.PETLLiveActivityExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		FA7BF7872E36E88800B48A29 /* Build configuration list for PBXProject "PETL" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA7BF7952E36E88900B48A29 /* Debug */,
+				FA7BF7962E36E88900B48A29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FA7BF7972E36E88900B48A29 /* Build configuration list for PBXNativeTarget "PETL" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA7BF7982E36E88900B48A29 /* Debug */,
+				FA7BF7992E36E88900B48A29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FA7BF7B82E36EB7500B48A29 /* Build configuration list for PBXNativeTarget "PETLLiveActivityExtensionExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA7BF7B92E36EB7500B48A29 /* Debug */,
+				FA7BF7BA2E36EB7500B48A29 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/OneSignal/OneSignal-iOS-SDK";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.2.14;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FA7BF7C12E36F17E00B48A29 /* OneSignalExtension */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalExtension;
+		};
+		FA7BF7C32E36F17E00B48A29 /* OneSignalFramework */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalFramework;
+		};
+		FA7BF7C52E36F17E00B48A29 /* OneSignalInAppMessages */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalInAppMessages;
+		};
+		FA7BF7C72E36F17E00B48A29 /* OneSignalLocation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalLocation;
+		};
+		FA7BF7C92E36F19000B48A29 /* OneSignalExtension */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalExtension;
+		};
+		FA7BF7CB2E36F19000B48A29 /* OneSignalFramework */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalFramework;
+		};
+		FA7BF7CD2E36F19000B48A29 /* OneSignalInAppMessages */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalInAppMessages;
+		};
+		FA7BF7CF2E36F19000B48A29 /* OneSignalLocation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FA7BF7C02E36F17E00B48A29 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalLocation;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = FA7BF7842E36E88800B48A29 /* Project object */;
+}
