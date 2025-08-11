@@ -686,10 +686,8 @@ final class BatteryTrackingManager: ObservableObject {
                                  chip: nil)
             ChargeEstimator.shared.startSession(
                 device: profile,
-                sessionId: currentSessionId,
                 startPct: systemPercent,
-                at: now,
-                nominalPowerW: 10.0
+                at: now
             )
         }
     }

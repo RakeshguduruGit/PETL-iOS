@@ -43,19 +43,20 @@ final class ChargeEstimator {
     private let trickleStartPct: Int = 80
 
     private(set) var current: Current?
+    private(set) var lastEstimate: ChargeEstimate?
 
     // MARK: API
-    func startSession(device: DeviceProfile, sessionId sid: UUID?, startPct sp: Int, at: Date = Date(), nominalPowerW: Double = 10.0) {
-        self.sessionId = sid ?? UUID()
+    func startSession(device: DeviceProfile, startPct: Int, at: Date = Date()) {
+        self.sessionId = UUID()
         self.capacity_mAh = max(600, device.capacitymAh)
-        self.pNom = max(1.0, nominalPowerW)
-        self.startPct = sp
-        self.lastPct = sp
+        self.pNom = 10.0
+        self.startPct = startPct
+        self.lastPct = startPct
         self.lastPctChangeAt = at
         self.window.removeAll()
         self.alpha = 1.0
         self.lastETA = nil
-        recompute(now: at, sysPct: sp)
+        recompute(now: at, sysPct: startPct)
     }
 
     func noteBattery(levelPercent: Int, at: Date = Date()) {
@@ -86,8 +87,57 @@ final class ChargeEstimator {
         sessionId = nil
         window.removeAll()
         current = nil
+        lastEstimate = nil
         lastETA = nil
         alpha = 1.0
+    }
+
+    func updateFromRateEstimator(_ out: ChargingRateEstimator.Output) {
+        // RateOut should expose: estPercent:Int, pctPerMin:Double, watts:Double, source: .warmup/.active/.trickle
+        let now = Date()
+        let soc = max(0, min(100, Int(out.estPercent)))
+
+        let inWarmup = (out.source == .warmupFallback)
+        let t1_theory = theoreticalMinutesPer1pct(atSOC: soc)
+
+        // If warming, use theory for ETA and force 10W
+        let minutesToFull: Int = {
+            if inWarmup {
+                let eta = Double(100 - soc) * t1_theory
+                return Int(round(eta))
+            } else {
+                // from estimator slope (pct/min) → minutes per 1%
+                let t1 = max(0.1, 1.0 / max(0.0001, out.pctPerMin))
+                return Int(round(Double(100 - soc) * t1))
+            }
+        }()
+
+        let watts: Double = inWarmup ? 10.0 : max(0.0, out.watts)
+
+        // Update `current` (for card/DI and power chart)
+        self.current = .init(
+            computedAt: now,
+            level01: Double(soc)/100.0,
+            watts: watts,
+            isInWarmup: inWarmup,
+            phase: soc >= 80 ? .trickle : (inWarmup ? .warmup : .active)
+        )
+
+        // Publish a ChargeEstimate every tick (warmup included!)
+        let ppm: Double = {
+            // minutes per 1% used for this tick
+            let t1 = inWarmup ? t1_theory : max(0.1, 1.0 / max(0.0001, out.pctPerMin))
+            return 1.0 / t1
+        }()
+
+        let est = ChargeEstimate(
+            computedAt: now,
+            pctPerMin: ppm,
+            minutesToFull: minutesToFull,
+            level01: Double(soc)/100.0
+        )
+        self.lastEstimate = est
+        estimateSubject.send(est)
     }
 
     // MARK: Internals

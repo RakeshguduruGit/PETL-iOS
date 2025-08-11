@@ -476,13 +476,13 @@ final class LiveActivityManager {
             addToAppLogs("🧯 DI edge clamp — using lastStable=\(etaForDI.map{"\($0)m"} ?? "—")")
         }
 
-        let etaMin = etaForDI ?? 0
+        let etaMin = etaForDI ?? ETAPresenter.shared.lastStableMinutes ?? estimate.minutesToFull ?? 0
         let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
         
         let state = PETLLiveActivityExtensionAttributes.ContentState(
             batteryLevel: Int(estimate.level01 * 100),
             isCharging: isChg,
-            chargingRate: ChargingAnalytics.chargingCharacteristic(pctPerMinute: estimate.pctPerMin).0,
+            chargingRate: ChargingAnalytics.label(forPctPerMinute: estimate.pctPerMin),
             estimatedWattage: String(format: "%.1fW", rawW),
             timeToFullMinutes: etaMin,
             expectedFullDate: expectedFullDate,
@@ -524,7 +524,7 @@ final class LiveActivityManager {
             addToAppLogs("🧯 DI edge clamp — using lastStable=\(etaForDI.map{"\($0)m"} ?? "—")")
         }
         
-        let etaMin = etaForDI ?? 0
+        let etaMin = etaForDI ?? ETAPresenter.shared.lastStableMinutes ?? 0
         let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
         
         let state = PETLLiveActivityExtensionAttributes.ContentState(
@@ -854,7 +854,7 @@ final class LiveActivityManager {
             ).minutes
             : rawETA
         
-        let (label, _) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: 1.0) // Default rate
+        let label = ChargingAnalytics.label(forPctPerMinute: 1.0) // Default rate
 
         let etaMin = initialEta ?? 0
         let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
@@ -888,7 +888,7 @@ final class LiveActivityManager {
             ? ETAPresenter.shared.presented(rawETA: rawETA, watts: rawW, sysPct: sysPct, isCharging: isCharging, isWarmup: isWarm, tickToken: token).minutes
             : rawETA
         
-        let (label, _) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: 1.0) // Default rate
+        let label = ChargingAnalytics.label(forPctPerMinute: 1.0) // Default rate
         
         let etaMin = displayedETA ?? 0
         let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))

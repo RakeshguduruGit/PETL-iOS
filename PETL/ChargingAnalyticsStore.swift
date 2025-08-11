@@ -21,24 +21,19 @@ final class ChargingAnalyticsStore: ObservableObject {
     private let uiLogger = Logger(subsystem: "com.petl.app", category: "ui")
 
     init() {
-        // Subscribe to ChargeEstimator's estimates
         ChargeEstimator.shared.estimateSubject
             .receive(on: RunLoop.main)
-            .sink { [weak self] estimate in 
-                self?.uiLogger.info("📊 UI Estimate: \(estimate.minutesToFull ?? 0) min, rate=\(String(format: "%.1f", estimate.pctPerMin))%/min")
-                self?.ingest(estimate: estimate) 
+            .sink { [weak self] est in
+                guard let self else { return }
+                let m = est.minutesToFull ?? -1
+                self.uiLogger.info("📊 UI Estimate: \(m) min, rate=\(String(format: "%.2f", est.pctPerMin))%/min")
+                self.ingest(estimate: est)
             }
             .store(in: &cancellables)
 
-        // Seed immediately from current estimate
-        if let current = ChargeEstimator.shared.current {
-            let estimate = ChargeEstimator.ChargeEstimate(
-                computedAt: current.computedAt,
-                pctPerMin: 60.0 / max(0.1, 10.0), // Default rate
-                minutesToFull: nil,
-                level01: current.level01
-            )
-            ingest(estimate: estimate)
+        // Optional: seed from lastEstimate if the estimator exposes it
+        if let last = ChargeEstimator.shared.lastEstimate {
+            ingest(estimate: last)
         }
     }
 
@@ -46,7 +41,8 @@ final class ChargingAnalyticsStore: ObservableObject {
         let now = est.computedAt
 
         // derive characteristic from the unified rate
-        let (label, watts) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: est.pctPerMin)
+        let label = ChargingAnalytics.label(forPctPerMinute: est.pctPerMin)
+        let wattsStr = String(format: "%.1fW", BatteryTrackingManager.shared.currentWatts)
 
         // Check if charging based on BatteryTrackingManager (not from estimate)
         let isCharging = BatteryTrackingManager.shared.isCharging
@@ -64,11 +60,11 @@ final class ChargingAnalyticsStore: ObservableObject {
             // update live + cache for grace period
             timeToFullMinutes = est.minutesToFull
             characteristicLabel = label
-            characteristicWatts = watts
+            characteristicWatts = wattsStr
             hasEverComputed = true
             lastKnownMinutes = est.minutesToFull
             lastKnownLabel = label
-            lastKnownWatts = watts
+            lastKnownWatts = wattsStr
             lastPluggedAt = now
         } else {
             // not charging: show the last known values for a short grace window
