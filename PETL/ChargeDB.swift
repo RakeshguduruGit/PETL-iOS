@@ -179,7 +179,7 @@ final class ChargeDB {
             let chg = sqlite3_column_int(st,2) == 1
             let soc = Int(sqlite3_column_int(st,3))
             let watts = sqlite3_column_type(st,4) == SQLITE_NULL ? nil : sqlite3_column_double(st,4)
-            let eta = sqlite3_column_type(st,6) == SQLITE_NULL ? nil : Int(sqlite3_column_int(st,5))
+            let eta = sqlite3_column_type(st,5) == SQLITE_NULL ? nil : Int(sqlite3_column_int(st,5))
             let ev  = ChargeEvent(rawValue: String(cString: sqlite3_column_text(st,6))) ?? .sample
             let src = sqlite3_column_type(st,7) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(st,7))
             out.append(.init(ts: ts, sessionId: sid, isCharging: chg, soc: soc, watts: watts, etaMinutes: eta, event: ev, src: src))
