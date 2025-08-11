@@ -34,7 +34,7 @@ actor ActivityCoordinator {
     private var current: Activity<PETLLiveActivityExtensionAttributes>? = nil
     private var isRequesting = false
     
-    func startIfNeeded() async -> String? {
+    func startIfNeeded(reason: String) async -> String? {
         guard !isRequesting else { return nil }
         
         if let cur = current {
@@ -359,7 +359,7 @@ final class LiveActivityManager {
                     return
                 }
                 osLogger.info("▶️ Remote start honored (seq=\(seq))")
-                Task { await startIfNeeded() }
+                Task { await startActivity(reason: "remote-start") }
             } else {
                 osLogger.info("🚫 Remote start ignored (local not charging, seq=\(seq))")
             }
@@ -392,7 +392,7 @@ final class LiveActivityManager {
         if s.isCharging {
             startsRequested += 1
             if !hasLiveActivity {
-                Task { await startIfNeeded() }
+                Task { await startActivity(reason: "battery-snapshot") }
             }
         } else {
             endsRequestedLocal += 1
@@ -583,7 +583,7 @@ final class LiveActivityManager {
     func ensureStartedIfChargingNow() {
         let st = UIDevice.current.batteryState
         guard (st == .charging || st == .full), !hasLiveActivity else { return }
-        Task { await startIfNeeded() }
+        Task { await startActivity(reason: "ensure-started") }
     }
     
     @MainActor
@@ -612,13 +612,16 @@ final class LiveActivityManager {
     
     @MainActor
     func startIfNeeded() async {
+        await startActivity(reason: "charging-detected")
+    }
+    
+    @MainActor
+    private func startActivity(reason: String) async {
         // 0) Self-heal: if we *think* we're active but the system says otherwise, clear it
         if isActive && !hasLiveActivity {
             laLogger.warning("⚠️ isActive desynced (system has 0). Resetting.")
             isActive = false
         }
-
-
 
         // 1) Cooldown (keep your stability lock)
         if let ended = lastEndAt, Date().timeIntervalSince(ended) < minRestartInterval {
@@ -643,18 +646,23 @@ final class LiveActivityManager {
         // 4) Proceed to request via the actor
         let count = Activity<PETLLiveActivityExtensionAttributes>.activities.count
         addToAppLogs("🔍 System activities count before start: \(count)")
-        addToAppLogs("🚧 startIfNeeded running…")
-        let activityId = await ActivityCoordinator.shared.startIfNeeded()
+        addToAppLogs("🚧 startActivity(\(reason)) running…")
+        let activityId = await ActivityCoordinator.shared.startIfNeeded(reason: reason)
         if let id = activityId {
             startsSucceeded += 1
             isActive = true
             lastStartAt = Date()
-            laLogger.info("🎬 Started Live Activity id: \(id)")
-            addToAppLogs("🎬 Started Live Activity")
+            laLogger.info("🎬 Started Live Activity id: \(id) reason=\(reason)")
+            addToAppLogs("🎬 Started Live Activity reason=\(reason)")
             cleanupDuplicates(keepId: id)
             dumpActivities("post-start")
             cancelEndWatchdog()
             recentStartAt = Date()
+            
+            // Assert uniqueness in debug
+            #if DEBUG
+            assert(Activity<PETLLiveActivityExtensionAttributes>.activities.count <= 1, "Multiple activities detected unexpectedly")
+            #endif
             
             // Schedule background refresh for ongoing updates
             if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
@@ -666,7 +674,7 @@ final class LiveActivityManager {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 let st = UIDevice.current.batteryState
                 guard st == .charging || st == .full, !self.hasLiveActivity else { return }
-                if let retryId = await ActivityCoordinator.shared.startIfNeeded() {
+                if let retryId = await ActivityCoordinator.shared.startIfNeeded(reason: "\(reason)-retry") {
                     self.startsSucceeded += 1
                     self.isActive = true
                     addToAppLogs("🎬 Started Live Activity id: \(retryId) (retry)")
@@ -680,7 +688,7 @@ final class LiveActivityManager {
     func startWarmIfNeeded() async {
         // Make the *first* content act like warmup so it bypasses clamps
         forceWarmupNextPush = true
-        await startIfNeeded()
+        await startActivity(reason: "warm-start")
     }
     
     @MainActor
