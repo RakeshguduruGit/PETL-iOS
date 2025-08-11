@@ -14,7 +14,11 @@ final class ChargingAnalyticsStore: ObservableObject {
     private var lastKnownLabel: String = "—"
     private var lastKnownWatts: String = "—"
     private var lastPluggedAt: Date? = nil
+    private var lastActiveAt: Date? = nil
     private var wasCharging = false
+    
+    private let replugGraceSec: TimeInterval = 20
+    private let idleGraceSec: TimeInterval = 15
 
     private var cancellables = Set<AnyCancellable>()
     
@@ -72,9 +76,16 @@ final class ChargingAnalyticsStore: ObservableObject {
             lastKnownLabel = label
             lastKnownWatts = wattsStr
             lastPluggedAt = now
+            lastActiveAt = now
         } else {
             // Truly idle (no active estimator and not charging)
-            let withinGrace = (lastPluggedAt.map { est.computedAt.timeIntervalSince($0) < 20 } ?? false)
+            let now = Date()
+            let replugGrace = lastPluggedAt.map { now.timeIntervalSince($0) < replugGraceSec } ?? false
+            let idleGrace   = lastActiveAt.map { now.timeIntervalSince($0) < idleGraceSec } ?? false
+            let withinGrace = replugGrace || idleGrace
+            
+            uiLogger.info("🪙 grace replug=\(replugGrace, privacy: .public) idle=\(idleGrace, privacy: .public) within=\(withinGrace, privacy: .public)")
+            
             if withinGrace, let m = lastKnownMinutes {
                 timeToFullMinutes = m
                 characteristicLabel = lastKnownLabel
