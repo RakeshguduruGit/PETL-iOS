@@ -635,21 +635,21 @@ final class LiveActivityManager {
         let la = Logger(subsystem: "com.gopetl.PETL", category: "la")
 
         // A) Trace the call
-        la.info("🧵 startActivity reason=\(reason) mainThread=\(Thread.isMainThread) seed=\(seededMinutes) sysPct=\(sysPct)")
+        BatteryTrackingManager.shared.addToAppLogsCritical("🧵 startActivity(seed) reason=\(reason) mainThread=\(Thread.isMainThread) seed=\(seededMinutes) sysPct=\(sysPct)")
 
         // B) Authorization gate (log skip)
         let auth = ActivityAuthorizationInfo()
         if auth.areActivitiesEnabled == false {
-            la.warning("🚫 Skip start — Live Activities disabled by system/user")
+            BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — reason=LIVE-ACTIVITIES-DISABLED")
             return
         }
 
         // C) Already-active gate (log skip)
         let before = Activity<PETLLiveActivityExtensionAttributes>.activities.count
-        la.info("🔍 System activities count before start: \(before)")
+        BatteryTrackingManager.shared.addToAppLogsCritical("🔍 System activities count before start: \(before)")
 
         if before > 0 {
-            la.debug("⏭️ Skip start — reason=ALREADY-ACTIVE")
+            BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — reason=ALREADY-ACTIVE")
             return
         }
 
@@ -658,7 +658,7 @@ final class LiveActivityManager {
             seededMinutes,
             ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct) ?? 0
         )
-        la.info("⛽️ seed=launch minutes=\(minutes) sysPct=\(sysPct)")
+        BatteryTrackingManager.shared.addToAppLogsCritical("⛽️ seed-\(minutes) sysPct=\(sysPct)")
 
         // E) Build first frame
         let attrs = PETLLiveActivityExtensionAttributes(name: "PETL Charging Activity")
@@ -680,10 +680,16 @@ final class LiveActivityManager {
         do {
             let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(
                 attributes: attrs,
-                content: content,
-                pushType: .token
+                content: content
             )
-            la.info("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason)")
+            BatteryTrackingManager.shared.addToAppLogsCritical("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason)")
+
+            // Post-request verification
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                let after = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+                BatteryTrackingManager.shared.addToAppLogsCritical("✅ post-request system count=\(after)")
+            }
 
             #if DEBUG
             let after = Activity<PETLLiveActivityExtensionAttributes>.activities.count
@@ -694,7 +700,7 @@ final class LiveActivityManager {
             }
             #endif
         } catch {
-            la.error("❌ Start failed: \(error.localizedDescription)")
+            BatteryTrackingManager.shared.addToAppLogsCritical("❌ Start failed: \(error.localizedDescription)")
         }
     }
     
@@ -726,7 +732,7 @@ final class LiveActivityManager {
     }
     
     @MainActor
-    private func startActivity(reason: String) async {
+    func startActivity(reason: String) async {
         // 0) Self-heal: if we *think* we're active but the system says otherwise, clear it
         if isActive && !hasLiveActivity {
             laLogger.warning("⚠️ isActive desynced (system has 0). Resetting.")
@@ -736,20 +742,20 @@ final class LiveActivityManager {
         // 1) Cooldown (keep your stability lock)
         if let ended = lastEndAt, Date().timeIntervalSince(ended) < minRestartInterval {
             let remain = Int(minRestartInterval - Date().timeIntervalSince(ended))
-            laLogger.debug("⏭️ Skip start — reason=COOLDOWN (\(remain)s left)")
+            BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — reason=COOLDOWN (\(remain)s left)")
             return
         }
 
         // 2) If the system already has an activity, mark active and bail
         if hasLiveActivity {
-            laLogger.debug("⏭️ Skip start — reason=ALREADY-ACTIVE")
+            BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — reason=ALREADY-ACTIVE")
             return
         }
 
         // 3) Hard guard on fresh battery state
         let st = UIDevice.current.batteryState
         guard st == .charging || st == .full else {
-            laLogger.debug("⏭️ Skip start — reason=NOT-CHARGING")
+            BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — reason=NOT-CHARGING")
             return
         }
 
@@ -757,6 +763,7 @@ final class LiveActivityManager {
         let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let seed = ETAPresenter.shared.lastStableMinutes
                ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
+        BatteryTrackingManager.shared.addToAppLogsCritical("➡️ delegating to seed requester reason=\(reason)")
         DispatchQueue.main.async {
             self.startActivity(seed: seed, sysPct: sysPct, reason: reason)
         }

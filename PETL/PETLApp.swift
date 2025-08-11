@@ -170,7 +170,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                     let pct = Int(UIDevice.current.batteryLevel * 100)
                     ETAPresenter.shared.resetForNewSession()
                     ETAPresenter.shared.resetSession(systemPercent: pct)
-                    await LiveActivityManager.shared.startWarmIfNeeded()
+                    await LiveActivityManager.shared.startActivity(reason: "CHARGE-BEGIN")
                 }
                 return
             }

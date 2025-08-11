@@ -1001,4 +1001,15 @@ final class BatteryTrackingManager: ObservableObject {
         // Also log to system logger
         contentLogger.info("\(s)")
     }
+    
+    func addToAppLogsCritical(_ s: String) {
+        // no rate limit; this MUST print
+        let timestamp = Date().formatted(date: .omitted, time: .shortened)
+        let logEntry = "[\(timestamp)] \(s)"
+        globalLogMessages.append(logEntry)
+        if globalLogMessages.count > 500 {
+            globalLogMessages.removeFirst(globalLogMessages.count - 500)
+        }
+        contentLogger.info("\(s)")
+    }
 } 
