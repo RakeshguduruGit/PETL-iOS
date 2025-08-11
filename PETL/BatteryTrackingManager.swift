@@ -112,6 +112,10 @@ final class BatteryTrackingManager: ObservableObject {
     private(set) var tickSeq: UInt64 = 0
     var tickToken: String { String(tickSeq) }   // public, read-only
     
+    // MARK: - Unplug Debounce Generation Tracking
+    private var unplugGen: UInt64 = 0            // generation to cancel stale tasks
+    private var unplugDebounceTask: Task<Void, Never>? = nil
+    
 
     
     // Public accessor for current smoothed watts (for Live Activity)
@@ -619,7 +623,6 @@ final class BatteryTrackingManager: ObservableObject {
     
     // MARK: - Charging Session Management
     private var endDebounce: DispatchWorkItem?
-    private var unplugDebounceTask: Task<Void, Never>?
 
     private func handleChargingTransition(isCharging: Bool) {
         if FeatureFlags.smoothChargingAnalytics {
@@ -666,7 +669,7 @@ final class BatteryTrackingManager: ObservableObject {
         resetPowerSmoothing("charge-end")
         // Optional: write a single 0W end marker so chart clearly drops
         _ = ChargeDB.shared._insertPowerLocked(ts: Date(), session: sid, soc: Int(level * 100), isCharging: false, watts: 0.0)
-        Task { await LiveActivityManager.shared.stopIfNeeded() }
+        // Note: Live Activity ending is now handled by the unplug debounce system
         NotificationCenter.default.post(name: .powerDBDidChange, object: nil)
         currentSessionId = nil
     }
@@ -696,23 +699,38 @@ final class BatteryTrackingManager: ObservableObject {
     }
     
     func handleUnplugDetected() {
-        // If we already scheduled a debounce, skip
-        if unplugDebounceTask != nil { return }
-
+        unplugGen &+= 1
+        let gen = unplugGen
+        unplugDebounceTask?.cancel()
         unplugDebounceTask = Task { [weak self] in
-            // Wait ~0.8s to confirm it wasn't a glitch
-            try? await Task.sleep(nanoseconds: 800_000_000)
             guard let self else { return }
-            if self.isCharging == false {
-                addToAppLogs("🧯 Unplug confirmed (debounced) — ending active activity")
-                await LiveActivityManager.shared.endActive("UNPLUG")
-                ChargeEstimator.shared.endSession(at: Date())
-                addToAppLogs("🛑 Charge end — estimator cleared")
-            } else {
-                addToAppLogs("🔁 Unplug canceled — device back to charging during debounce")
+            // Debounce window
+            try? await Task.sleep(nanoseconds: 800_000_000)
+
+            // Abort if superseded by a newer state change
+            guard gen == self.unplugGen else {
+                addToAppLogs("🔁 Debounce superseded — newer state change")
+                return
             }
-            self.unplugDebounceTask = nil
+            // Confirm still unplugged
+            guard self.isCharging == false else {
+                addToAppLogs("🔁 Debounce canceled — device back to charging")
+                return
+            }
+
+            addToAppLogs("🧯 Unplug confirmed (debounced) — ending active activity")
+            await LiveActivityManager.shared.endActive("UNPLUG-DEBOUNCED")
+            ChargeEstimator.shared.endSession(at: Date())
+            addToAppLogs("🛑 Charge end — estimator cleared")
         }
+    }
+    
+    // Call this on .charging transition (replug)
+    func handleReplugDetected() {
+        unplugGen &+= 1   // invalidates any pending unplug end
+        unplugDebounceTask?.cancel()
+        unplugDebounceTask = nil
+        addToAppLogs("🔁 Replug detected — canceled unplug debounce")
     }
     
     private func tickEstimator(systemPercent: Int, isCharging: Bool) {
@@ -968,6 +986,16 @@ final class BatteryTrackingManager: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard self.isCharging != newState else { return }
+            
+            // Call unplug/replug handlers before state change
+            if !newState {
+                // Transitioning to not charging (unplug detected)
+                self.handleUnplugDetected()
+            } else {
+                // Transitioning to charging (replug detected)
+                self.handleReplugDetected()
+            }
+            
             self.isCharging = newState
             if newState {
                 self.handleChargeBegan()

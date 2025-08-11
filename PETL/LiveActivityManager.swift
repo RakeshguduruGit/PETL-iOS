@@ -451,17 +451,8 @@ final class LiveActivityManager {
                 }
             }
         } else {
-            endsRequestedLocal += 1
-            Task { @MainActor in
-                await endAll("local unplug")
-                if hasLiveActivity {
-                    scheduleEndWatchdog()
-                    selfPingsQueued += 1
-                    #if DEBUG
-                    await OneSignalClient.shared.enqueueSelfEnd(seq: OneSignalClient.shared.bumpSeq())
-                    #endif
-                }
-            }
+            // Note: Unplug handling is now done by the bullet-proof debounce system in BatteryTrackingManager
+            // No direct endAll calls here to avoid race conditions
         }
     }
     #endif
