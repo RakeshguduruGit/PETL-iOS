@@ -170,6 +170,9 @@ final class ETAPresenter {
         guard let eta = rawETA else { 
             lastOutput = lastStableETA
             let output = Output(minutes: lastStableETA, formatted: lastStableETA.map { "\($0)m" } ?? "—")
+            if let stable = lastStableETA {
+                addToAppLogs("⏱️ ETA[fallback] seed=cached \(stable)m W=\(String(format:"%.1f", watts))")
+            }
             return output
         }
 
