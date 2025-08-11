@@ -157,6 +157,38 @@ final class LiveActivityManager {
     private let minRestartInterval: TimeInterval = 8
     private var forceWarmupNextPush = false
     
+    // MARK: - Activity ID Tracking
+    private var currentActivityID: String? // authoritative pointer
+    
+    // MARK: - Activity Registration
+    private func register(_ activity: Activity<PETLLiveActivityExtensionAttributes>, reason: String) {
+        currentActivityID = activity.id
+        addToAppLogs("🧷 Track id=\(String(activity.id.suffix(4))) reason=\(reason)")
+        attachObservers(activity)
+    }
+    
+    private func attachObservers(_ activity: Activity<PETLLiveActivityExtensionAttributes>) {
+        Task.detached { [weak self] in
+            for await state in activity.activityStateUpdates {
+                await MainActor.run {
+                    laLogger.info("📦 state=\(String(describing: state)) id=\(String(activity.id.suffix(4)))")
+                }
+                // When the system/user ends or dismisses it, forget our pointer.
+                switch state {
+                case .ended, .dismissed, .stale:
+                    await MainActor.run { [weak self] in
+                        if self?.currentActivityID == activity.id {
+                            self?.currentActivityID = nil
+                            laLogger.info("🧹 cleared currentActivityID (state=\(String(describing: state)))")
+                        }
+                    }
+                default:
+                    break
+                }
+            }
+        }
+    }
+    
     private var updateTimer: Timer?
     private var failsafeTask: UIBackgroundTaskIdentifier = .invalid
     private var lastUpdateTime: Date = Date()
@@ -196,6 +228,16 @@ final class LiveActivityManager {
         // Self-heal every foreground entry
         if isActive && !hasLiveActivity { isActive = false }
         if hasLiveActivity { isActive = true }
+        
+        // Startup recovery: if there's any system activity but currentActivityID == nil, call endAll
+        let systemActivities = Activity<PETLLiveActivityExtensionAttributes>.activities
+        if !systemActivities.isEmpty && currentActivityID == nil {
+            addToAppLogs("🔄 Startup recovery: \(systemActivities.count) system activities but no tracked ID")
+            Task { @MainActor in
+                await endAll("STARTUP-RECOVERY")
+            }
+        }
+        
         dumpActivities("foreground")
         let now = Date()
         if now.timeIntervalSince(lastFGSummaryAt) > 8 {
@@ -207,12 +249,12 @@ final class LiveActivityManager {
     
     @MainActor
     func stopIfNeeded() async {
-        await endAll("external call")
+        await endActive("external call")
     }
     
     @MainActor
     func endIfActive() async {
-        await endAll("charge ended")
+        await endActive("charge ended")
     }
     
     @MainActor
@@ -678,12 +720,14 @@ final class LiveActivityManager {
         do {
             let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(attributes: attrs, content: content, pushType: .token)
             addToAppLogs("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=on)")
+            register(activity, reason: reason.rawValue)
             observePushToken(activity) // safe logger capture below
         } catch {
             addToAppLogs("⚠️ Push start failed (\(error.localizedDescription)) — falling back to no-push")
             do {
                 let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(attributes: attrs, content: content)
                 addToAppLogs("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=off)")
+                register(activity, reason: reason.rawValue)
             } catch {
                 addToAppLogs("❌ Start failed (no-push): \(error.localizedDescription)")
                 return
@@ -693,7 +737,7 @@ final class LiveActivityManager {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 150_000_000)
             let after = Activity<PETLLiveActivityExtensionAttributes>.activities.count
-            addToAppLogs("✅ post-request system count=\(after)")
+            addToAppLogs("✅ post-request system count=\(after) tracked=\(String(currentActivityID?.suffix(4) ?? "nil"))")
         }
     }
 
@@ -830,6 +874,30 @@ func startActivity(reason: LAStartReason) async {
 
         lastRichState = rich
         Task { @MainActor in await pushToAll(rich) }
+    }
+    
+    @MainActor
+    func endActive(_ reason: String) async {
+        if let id = currentActivityID,
+           let a = Activity<PETLLiveActivityExtensionAttributes>.activities.first(where: { $0.id == id }) {
+            addToAppLogs("🧪 endActive(\(reason)) id=\(String(id.suffix(4)))")
+            do {
+                try await a.end(dismissalPolicy: .immediate)
+                addToAppLogs("✅ end done id=\(String(id.suffix(4)))")
+            } catch {
+                addToAppLogs("❌ end failed id=\(String(id.suffix(4))): \(error.localizedDescription)")
+            }
+            // Whether success or not, drop the pointer if it no longer exists:
+            let stillThere = Activity<PETLLiveActivityExtensionAttributes>.activities.contains(where: { $0.id == id })
+            if !stillThere { 
+                currentActivityID = nil 
+                addToAppLogs("🧹 cleared currentActivityID (no longer exists)")
+            }
+        } else {
+            // No tracked ID? Fall back to a sweep.
+            addToAppLogs("🔄 endActive(\(reason)) - no tracked ID, falling back to endAll")
+            await endAll("FALLBACK-\(reason)")
+        }
     }
     
     @MainActor

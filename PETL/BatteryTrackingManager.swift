@@ -704,8 +704,8 @@ final class BatteryTrackingManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard let self else { return }
             if self.isCharging == false {
-                addToAppLogs("🧯 Unplug confirmed (debounced) — ending activities")
-                await LiveActivityManager.shared.endAll("debounced-unplug")
+                addToAppLogs("🧯 Unplug confirmed (debounced) — ending active activity")
+                await LiveActivityManager.shared.endActive("UNPLUG")
                 ChargeEstimator.shared.endSession(at: Date())
                 addToAppLogs("🛑 Charge end — estimator cleared")
             } else {
