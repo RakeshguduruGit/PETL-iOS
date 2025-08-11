@@ -690,17 +690,17 @@ final class LiveActivityManager {
         // Try with push token first; if it fails, fallback to no-push.
         do {
             let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(attributes: attrs, content: content, pushType: .token)
-            addToAppLogs("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=on)")
+            BatteryTrackingManager.shared.addToAppLogsCritical("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=on)")
             register(activity, reason: reason.rawValue)
             observePushToken(activity) // safe logger capture below
         } catch {
-            addToAppLogs("⚠️ Push start failed (\(error.localizedDescription)) — falling back to no-push")
+            BatteryTrackingManager.shared.addToAppLogsCritical("⚠️ Push start failed (\(error.localizedDescription)) — falling back to no-push")
             do {
                 let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(attributes: attrs, content: content)
-                addToAppLogs("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=off)")
+                BatteryTrackingManager.shared.addToAppLogsCritical("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=off)")
                 register(activity, reason: reason.rawValue)
             } catch {
-                addToAppLogs("❌ Start failed (no-push): \(error.localizedDescription)")
+                BatteryTrackingManager.shared.addToAppLogsCritical("❌ Start failed (no-push): \(error.localizedDescription)")
                 return
             }
         }
@@ -708,7 +708,7 @@ final class LiveActivityManager {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 150_000_000)
             let after = Activity<PETLLiveActivityExtensionAttributes>.activities.count
-            addToAppLogs("✅ post-request system count=\(after) tracked=\(String(currentActivityID?.suffix(4) ?? "nil"))")
+            BatteryTrackingManager.shared.addToAppLogsCritical("✅ post-request system count=\(after) tracked=\(String(currentActivityID?.suffix(4) ?? "nil"))")
         }
     }
 
@@ -729,7 +729,7 @@ final class LiveActivityManager {
 func startActivity(reason: LAStartReason) async {
     // 0) Thrash guard to prevent back-to-back starts
     if let t = lastStartAt, Date().timeIntervalSince(t) < 2 {
-        addToAppLogs("⏭️ Skip start — THRASH-GUARD (<2s since last)")
+        BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — THRASH-GUARD (<2s since last)")
         return
     }
 
@@ -764,7 +764,8 @@ func startActivity(reason: LAStartReason) async {
     let seed = ETAPresenter.shared.lastStableMinutes
            ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
            ?? 0
-    addToAppLogs("➡️ delegating to seeded start reason=\(reason.rawValue)")
+    BatteryTrackingManager.shared.addToAppLogsCritical("➡️ delegating to seeded start reason=\(reason.rawValue)")
+    lastStartAt = Date()
     startActivity(seed: seed, sysPct: sysPct, reason: reason)
     
     // 6) Update state after successful start
