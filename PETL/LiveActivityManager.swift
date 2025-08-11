@@ -838,7 +838,9 @@ final class LiveActivityManager {
         let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
 
         // Use default values for first content
-        let rawETA: Int? = nil
+        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
+        let rawETA = ETAPresenter.shared.lastStableMinutes
+                  ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
         let rawW = ChargeEstimator.shared.current?.watts ?? BatteryTrackingManager.shared.currentWatts
         let isWarmFromEstimator = ChargeEstimator.shared.current?.isInWarmup ?? false
 

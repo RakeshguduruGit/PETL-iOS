@@ -1161,9 +1161,11 @@ struct HomeNavigationContent: View {
                                     .tracking(-0.43)
                                 Spacer()
                                 Text(tracker.isCharging ? {
-                                    let rawETA = analytics.timeToFullMinutes
-                                    let watts = ChargeEstimator.shared.current?.watts ?? 0.0
                                     let sysPct = Int(BatteryTrackingManager.shared.level * 100)
+                                    let rawETA = analytics.timeToFullMinutes
+                                              ?? ETAPresenter.shared.lastStableMinutes
+                                              ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
+                                    let watts = ChargeEstimator.shared.current?.watts ?? 0.0
                                     let isChg = BatteryTrackingManager.shared.isCharging
                                     let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
                                     
