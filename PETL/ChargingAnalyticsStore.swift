@@ -25,18 +25,24 @@ final class ChargingAnalyticsStore: ObservableObject {
         ChargeEstimator.shared.estimateSubject
             .receive(on: RunLoop.main)
             .sink { [weak self] estimate in 
-                self?.uiLogger.info("📊 UI Estimate: \(estimate.minutesToFull) min, rate=\(String(format: "%.1f", estimate.pctPerMin))%/min")
+                self?.uiLogger.info("📊 UI Estimate: \(estimate.minutesToFull ?? 0) min, rate=\(String(format: "%.1f", estimate.pctPerMin))%/min")
                 self?.ingest(estimate: estimate) 
             }
             .store(in: &cancellables)
 
         // Seed immediately from current estimate
         if let current = ChargeEstimator.shared.current {
-            ingest(estimate: current)
+            let estimate = ChargeEstimator.ChargeEstimate(
+                computedAt: current.computedAt,
+                pctPerMin: 60.0 / max(0.1, 10.0), // Default rate
+                minutesToFull: nil,
+                level01: current.level01
+            )
+            ingest(estimate: estimate)
         }
     }
 
-    private func ingest(estimate est: ChargeEstimate) {
+    private func ingest(estimate est: ChargeEstimator.ChargeEstimate) {
         let now = est.computedAt
 
         // derive characteristic from the unified rate

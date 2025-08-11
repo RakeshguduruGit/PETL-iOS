@@ -340,6 +340,11 @@ final class BatteryTrackingManager: ObservableObject {
     }
 
     private func tickSmoothingAndPause(isChargingNow: Bool, systemPct: Int, now: Date) {
+        // Notify the new estimator of battery level changes
+        if FeatureFlags.smoothChargingAnalytics, isChargingNow {
+            ChargeEstimator.shared.noteBattery(levelPercent: systemPct, at: now)
+        }
+        
         guard FeatureFlags.smoothAnalyticsP1, let s = smoother, isChargingNow else { return }
         
         // Increment tick sequence for presentation idempotency
@@ -459,8 +464,18 @@ final class BatteryTrackingManager: ObservableObject {
         let now = Date()
         let tsSec = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970)) // quantize to 1s
         let soc = Int(level * 100)
-        let w = lastDisplayed.watts
-        let isWarmup = (lastSmoothedOut?.confidence == .warmup)
+        
+        // Use new ChargeEstimator's effective watts if available, otherwise fall back to legacy
+        let w: Double
+        if FeatureFlags.smoothChargingAnalytics, let current = ChargeEstimator.shared.current {
+            w = current.watts
+        } else {
+            w = lastDisplayed.watts
+        }
+        
+        let isWarmup = FeatureFlags.smoothChargingAnalytics ? 
+            (ChargeEstimator.shared.current?.isInWarmup ?? false) : 
+            (lastSmoothedOut?.confidence == .warmup)
 
         if isChargingNow && w.isFinite {
             if isWarmup {
@@ -610,6 +625,14 @@ final class BatteryTrackingManager: ObservableObject {
                     if stillUnplugged {
                         self.endEstimatorIfNeeded()
                         self.sessionActive = false
+                        
+                        // Robust Live Activity end with debounce
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s debounce
+                            if !self.isCharging { // still unplugged
+                                await LiveActivityManager.shared.endAll("unplugged")
+                            }
+                        }
                     }
                 }
                 endDebounce = work
@@ -638,7 +661,6 @@ final class BatteryTrackingManager: ObservableObject {
         guard currentSessionId == nil else { return }    // avoid double-begin
         currentSessionId = UUID()
         resetPowerSmoothing("charge-begin")
-        Task { await LiveActivityManager.shared.startIfNeeded() }
         NotificationCenter.default.post(name: .powerDBDidChange, object: nil)
     }
     
@@ -654,122 +676,36 @@ final class BatteryTrackingManager: ObservableObject {
 
     private func beginEstimatorIfNeeded(systemPercent: Int) {
         guard FeatureFlags.smoothChargingAnalytics else { return }
-        guard rateEstimator == nil else { return } // ← idempotent
-
-        // RESET FIRST (order matters)
-        ETAPresenter.shared.resetForNewSession()
-        ETAPresenter.shared.resetSession(systemPercent: systemPercent)
-        handleChargeBegan()  // NEW: use dedicated session method
-
-        let mAh = getDeviceBatteryCapacity()
-        rateEstimator = ChargingRateEstimator(capacitymAh: mAh)
-        rateEstimator?.begin(systemPercent: systemPercent, now: Date())
-        addToAppLogs("🔌 Charge begin — warmup (10W) started")
-        
-        // Write session start to unified DB
-        ChargeDB.shared.append(.init(
-            ts: Date().timeIntervalSince1970,
-            sessionId: currentSessionId?.uuidString ?? "",
-            isCharging: true,
-            soc: systemPercent,
-            watts: nil,
-            etaMinutes: nil,
-            event: .session_start,
-            src: "warmup"
-        ))
-        
-        Task { await LiveActivityManager.shared.markNewSession() }
-        resetForSessionChange()
-        
-        // Notify UI to refresh power charts (coalesced)
-        NotificationCenter.default.post(name: .powerDBDidChange, object: nil)
+        let now = Date()
+        Task { @MainActor in
+            await DeviceProfileService.shared.ensureLoaded()
+            let profile = DeviceProfileService.shared.profile
+                ?? DeviceProfile(rawIdentifier: UIDevice.current.model,
+                                 name: UIDevice.current.model,
+                                 capacitymAh: 3000,
+                                 chip: nil)
+            ChargeEstimator.shared.startSession(
+                device: profile,
+                sessionId: currentSessionId,
+                startPct: systemPercent,
+                at: now,
+                nominalPowerW: 10.0
+            )
+        }
     }
     
     private func endEstimatorIfNeeded() {
         guard FeatureFlags.smoothChargingAnalytics else { return }
-        guard let e = rateEstimator else { return }
-        e.end(now: Date())
-        rateEstimator = nil
+        ChargeEstimator.shared.endSession(at: Date())
         addToAppLogs("🛑 Charge end — estimator cleared")
-        
-        handleChargeEnded()  // NEW: use dedicated session method
-        
-        // Write session end to unified DB
-        ChargeDB.shared.append(.init(
-            ts: Date().timeIntervalSince1970,
-            sessionId: currentSessionId?.uuidString ?? "",
-            isCharging: false,
-            soc: Int(level * 100),
-            watts: nil,
-            etaMinutes: nil,
-            event: .session_end,
-            src: "end"
-        ))
-        
-        let currentPct = Int(level * 100)
-        ETAPresenter.shared.resetSession(systemPercent: currentPct)
-        resetForSessionChange()
-        
-        // Notify UI to refresh power charts (coalesced)
-        NotificationCenter.default.post(name: .powerDBDidChange, object: nil)
     }
     
     private func tickEstimator(systemPercent: Int, isCharging: Bool) {
         guard FeatureFlags.smoothChargingAnalytics else { return }
-        guard let estimator = rateEstimator else { return }
-        
-        let now = Date()
-        let out = estimator.tick(systemPercent: systemPercent,
-                                isCharging: isCharging,
-                                now: now)
-        
-        // Update tick time for dt calculation
-        let previousTick = lastTick
-        let dt = previousTick?.timeIntervalSince(now) ?? 0
-        let dtStr = String(format: "%.1fs", abs(dt))
-        
-        // Update ChargeEstimator with smoothed values
-        ChargeEstimator.shared.updateFromRateEstimator(out)
-        
-        // Write a unified sample to history
-        historyStore.append(ChargeSample(
-            ts: Date(),
-            systemPercent: systemPercent,
-            estPercent: out.estPercent,
-            watts: out.watts,
-            pctPerMin: out.pctPerMin,
-            source: String(describing: out.source)
-        ))
-        
-        // Write to unified DB with sanitized ETA
-        ChargeDB.shared.append(.init(
-            ts: Date().timeIntervalSince1970,
-            sessionId: currentSessionId?.uuidString ?? "",
-            isCharging: isCharging,
-            soc: systemPercent,
-            watts: out.watts,
-            etaMinutes: ETAPresenter.shared.lastStableMinutes,
-            event: .sample,
-            src: String(describing: out.source)
-        ))
-        
-        // Canonical debug lines (Phase 1.8: with seconds and dt)
-        addToAppLogs("⚙️ RateEstimator source=\(out.source) est=\(out.estPercent.rounded())% rate=\(out.pctPerMin.rounded())%/min power=\(out.watts.rounded())W m2f=\(out.minutesToFull ?? -1) dt=\(dtStr)")
-        
-        // Finally update lastTick after all logging
-        lastTick = now
-        
-        // Backfill if we just crossed a real +5% boundary
-        if let b = out.backfill {
-            historyStore.backfillLinear(from: b.fromDate, to: b.toDate, fromPercent: b.fromPercent, toPercent: b.toPercent)
-            addToAppLogs("🧵 Backfill \(Int(b.fromPercent))%→\(Int(b.toPercent))% \(b.fromDate)→\(b.toDate)")
-        }
-        
-        // Log step transitions
-        if out.source == .actualStep {
-            addToAppLogs("📊 Step +5% in X min — EMA now \(out.pctPerMin.rounded()) %/min")
-        } else if out.source == .warmupFallback && sessionActive {
-            addToAppLogs("📈 First step seen — warmup ended, seeding EMA")
+        if isCharging {
+            ChargeEstimator.shared.tickPeriodic(at: Date())
+        } else {
+            ChargeEstimator.shared.endSession(at: Date())
         }
     }
     

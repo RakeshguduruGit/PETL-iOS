@@ -1,7 +1,7 @@
 import Foundation
 
 enum FeatureFlags {
-    static let smoothChargingAnalytics = false
+    static let smoothChargingAnalytics = true
     
     /// Phase-1: live smoothing for power/rate/time (no chart changes yet)
     static let smoothAnalyticsP1 = true

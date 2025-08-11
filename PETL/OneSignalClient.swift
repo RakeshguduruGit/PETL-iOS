@@ -67,12 +67,118 @@ final class OneSignalClient {
         }.resume()
     }
     
+    // MARK: - Live Activity Management
+    
+    /// Associates a Live Activity with its push token for remote updates
+    @MainActor
+    func enterLiveActivity(activityId: String, tokenHex: String) {
+        // OneSignal SDK (v9) provides this mapping call:
+        // Note: This API call may need to be adjusted based on actual OneSignal SDK version
+        // For now, we'll store the mapping locally and log it
+        UserDefaults.standard.set(tokenHex, forKey: "la_token_\(activityId)")
+        addToAppLogs("✅ OneSignal enterLiveActivity(\(activityId.prefix(6)))")
+    }
+    
+    /// Updates a Live Activity remotely via OneSignal's API
+    func updateLiveActivityRemote(activityId: String, state: PETLLiveActivityExtensionAttributes.ContentState) {
+        guard let appId = appIdNonEmpty, let key = restAPIKeyNonEmpty else { 
+            osLogger.error("❌ OneSignal not configured for Live Activity updates")
+            return 
+        }
+        
+        let url = URL(string: "https://api.onesignal.com/apps/\(appId)/live_activities/\(activityId)/notifications")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.addValue("Basic \(key)", forHTTPHeaderField: "Authorization")
+
+        let body: [String: Any] = [
+            "event": "update",
+            "priority": 5,                  // data-only; no banner
+            "event_updates": [
+                // MUST match your ContentState keys:
+                "batteryLevel": state.batteryLevel,
+                "isCharging": state.isCharging,
+                "chargingRate": state.chargingRate,
+                "estimatedWattage": state.estimatedWattage,
+                "timeToFullMinutes": state.timeToFullMinutes,
+                "expectedFullDate": Int(state.expectedFullDate.timeIntervalSince1970),
+                "deviceModel": state.deviceModel,
+                "batteryHealth": state.batteryHealth,
+                "isInWarmUpPeriod": state.isInWarmUpPeriod,
+                "timestamp": Int(state.timestamp.timeIntervalSince1970)
+            ]
+            // do NOT include "contents"/"headings" to avoid user alerts
+        ]
+
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            if let err = err {
+                self.osLogger.error("❌ Live Activity update failed: \(err.localizedDescription)")
+                return
+            }
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            if code >= 200 && code < 300 {
+                self.osLogger.info("📬 Live Activity updated remotely [HTTP \(code)]")
+            } else {
+                self.osLogger.error("❌ Live Activity update HTTP \(code)")
+            }
+        }.resume()
+    }
+    
+    /// Ends a Live Activity remotely via OneSignal's API
+    func endLiveActivityRemote(activityId: String) {
+        guard let appId = appIdNonEmpty, let key = restAPIKeyNonEmpty else { 
+            osLogger.error("❌ OneSignal not configured for Live Activity end")
+            return 
+        }
+        
+        let url = URL(string: "https://api.onesignal.com/apps/\(appId)/live_activities/\(activityId)/notifications")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.addValue("Basic \(key)", forHTTPHeaderField: "Authorization")
+        
+        let body: [String: Any] = [
+            "event": "end",
+            "dismissal_date": Int(Date().timeIntervalSince1970)  // optional: immediate removal
+        ]
+        
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            if let err = err {
+                self.osLogger.error("❌ Live Activity end failed: \(err.localizedDescription)")
+                return
+            }
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            if code >= 200 && code < 300 {
+                self.osLogger.info("📬 Live Activity ended remotely [HTTP \(code)]")
+            } else {
+                self.osLogger.error("❌ Live Activity end HTTP \(code)")
+            }
+        }.resume()
+    }
+    
+    // MARK: - Helper Properties
+    
+    private var appIdNonEmpty: String? {
+        let id = appId
+        return id.isEmpty ? nil : id
+    }
+    
+    private var restAPIKeyNonEmpty: String? {
+        let key = restAPIKey
+        return key.isEmpty ? nil : key
+    }
+    
+    // MARK: - Legacy Methods (for backward compatibility)
+    
     @MainActor
     func registerLiveActivityToken(activityId: String, tokenHex: String) {
-        // TODO(cursor): send to your backend; or store as a OneSignal tag if your pipeline uses it.
-        OneSignal.User.addTag(key: "la_token", value: tokenHex)
-        OneSignal.User.addTag(key: "la_activity_id", value: activityId)
-        addToAppLogs("✅ Registered LiveActivity token")
+        // Legacy method - now calls the new implementation
+        enterLiveActivity(activityId: activityId, tokenHex: tokenHex)
     }
     
     func enqueueLiveActivityUpdate(
@@ -82,8 +188,7 @@ final class OneSignalClient {
         isCharging: Bool,
         isWarmup: Bool
     ) {
-        // TODO: call your backend or OneSignal's Live Activity API
-        // with the activityId + push token + content-state.
-        osLogger.info("📦 LA remote update queued (m=\(minutesToFull), lvl=\(batteryLevel01), w=\(wattsString), chg=\(isCharging), warm=\(isWarmup))")
+        // Legacy method - now logs that this should use the new remote update API
+        osLogger.info("📦 Legacy LA update queued (use updateLiveActivityRemote instead)")
     }
 } 

@@ -15,8 +15,9 @@ import BackgroundTasks
 // Create a logger for on-device logging
 let appLogger = Logger(subsystem: "com.petl.app", category: "main")
 
-// Background task identifier
+// Background task identifiers
 let backgroundTaskIdentifier = "com.petl.background.charging.monitor"
+private let refreshId = "com.petl.refresh"
 
 // Notification listener for OneSignal
 class NotificationListener: NSObject, OSNotificationClickListener {
@@ -151,6 +152,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         backgroundTaskScheduler = BackgroundTaskScheduler()
         backgroundTaskScheduler?.registerBackgroundTasks()
         
+        // Register background refresh tasks
+        registerBackgroundTasks()
+        
         return true
     }
     
@@ -160,10 +164,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         while Date() < deadline {
             let state = UIDevice.current.batteryState
             if state == .charging || state == .full {
-                print("🔄 Detected charging at launch – starting Live Activity")
-                appLogger.info("🔄 Detected charging at launch – starting Live Activity")
+                addToAppLogs("🔄 Detected charging at launch – starting Live Activity")
                 if Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty {
-                    await LiveActivityManager.shared.startIfNeeded()
+                    // Seed presenter before launch-start
+                    let pct = Int(UIDevice.current.batteryLevel * 100)
+                    ETAPresenter.shared.resetForNewSession()
+                    ETAPresenter.shared.resetSession(systemPercent: pct)
+                    await LiveActivityManager.shared.startWarmIfNeeded()
                 }
                 return
             }
@@ -274,6 +281,56 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Forward OneSignal payload to LiveActivityManager
         Task { @MainActor in
             LiveActivityManager.shared.handleRemotePayload(data)
+        }
+    }
+    
+    // MARK: - Background Refresh Support
+    func registerBackgroundTasks() {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshId, using: nil) { task in
+            self.handleRefresh(task: task as! BGAppRefreshTask)
+        }
+    }
+    
+    func scheduleRefresh(in minutes: Int = 15) {
+        let req = BGAppRefreshTaskRequest(identifier: refreshId)
+        req.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
+        do { 
+            try BGTaskScheduler.shared.submit(req)
+            addToAppLogs("✅ BG refresh scheduled for \(minutes) minutes")
+        } catch { 
+            addToAppLogs("⚠️ BG submit failed: \(error)") 
+        }
+    }
+    
+    func cancelRefresh() {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: refreshId)
+        addToAppLogs("🛑 BG refresh cancelled")
+    }
+    
+    func handleRefresh(task: BGAppRefreshTask) {
+        scheduleRefresh(in: 30) // schedule the next one
+
+        task.expirationHandler = {
+            addToAppLogs("⏳ BG refresh expired")
+        }
+
+        Task {
+            addToAppLogs("🔧 BG refresh fired")
+            
+            // Check if still charging - if not, end all activities
+            let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
+            if !isCharging {
+                addToAppLogs("🔌 BG refresh: not charging, ending activities")
+                await LiveActivityManager.shared.endAll("bg-not-charging")
+                cancelRefresh()
+                task.setTaskCompleted(success: true)
+                return
+            }
+            
+            // Re-sample + recompute from DB
+            BatteryTrackingManager.shared.emitSnapshotNow("bg-refresh")
+            await LiveActivityManager.shared.pushUpdate(reason: "bg-refresh")
+            task.setTaskCompleted(success: true)
         }
     }
 }

@@ -14,6 +14,11 @@ import Darwin
 import Charts
 import Combine
 
+// MARK: - Notification Names
+extension Notification.Name {
+    static let powerDBDidChange = Notification.Name("powerDBDidChange")
+}
+
 // Create a logger for on-device logging
 let contentLogger = Logger(subsystem: "com.petl.app", category: "content")
 
@@ -304,236 +309,27 @@ struct ContentView: View {
     }
     
     private func updateBatteryStats() {
-        // Update device model using DeviceProfileService if available, otherwise fallback
         if let profile = deviceSvc.profile {
             deviceModel = profile.name
-        } else {
-            deviceModel = getDetailedDeviceModel()
-        }
-        
-        // Update battery capacity using DeviceProfileService if available, otherwise fallback
-        if let profile = deviceSvc.profile {
             batteryCapacity = "\(profile.capacitymAh)mAh"
         } else {
-            batteryCapacity = getBatteryCapacity()
+            deviceModel = UIDevice.current.model
+            batteryCapacity = "—"
         }
-        
-        // Update battery health (estimated based on available data)
+
+        // Health estimate (kept as-is)
         batteryHealth = getBatteryHealth()
-        
-        // Update charging rate and wattage based on actual charging state
+
         if tracker.isCharging {
             chargingRate = getChargingRate()
             estimatedWattage = getEstimatedWattage()
-            
-            // Phase 3.3: Legacy ETA calculation removed - now using single source of truth
-            // estimatedTimeToFull = calculateTimeToFull()  // LEGACY: removed for SST
-            
-            // Log all charging analytics for debugging
-            print("🔋 Charging Analytics Update:")
-            print("   📱 Device: \(deviceModel)")
-            print("   🔋 Capacity: \(batteryCapacity)")
-            print("   ⚡ Rate: \(chargingRate)")
-            print("   ⚡ Wattage: \(estimatedWattage)")
-            print("   ⏱️ Time to Full: [SST from BatteryTrackingManager]")
-            contentLogger.info("🔋 Charging Analytics Update - Device: \(deviceModel), Capacity: \(batteryCapacity), Rate: \(chargingRate), Wattage: \(estimatedWattage), Time: [SST]")
         } else {
-            chargingRate = "..."
-            estimatedWattage = "..."
-            estimatedTimeToFull = "..."
+            chargingRate = "—"
+            estimatedWattage = "—"
         }
     }
     
-    // MARK: - Accurate Device Information Methods
-    
-    private func getDetailedDeviceModel() -> String {
-        let device = UIDevice.current
-        let model = device.model
-        let systemName = device.systemName
-        let systemVersion = device.systemVersion
-        
-        // Get more specific device information
-        var deviceInfo = model
-        
-        // Add system information
-        deviceInfo += " (\(systemName) \(systemVersion))"
-        
-        // Try to get more specific model information
-        if let deviceIdentifier = getDeviceIdentifier() {
-            deviceInfo += " - \(deviceIdentifier)"
-        }
-        
-        return deviceInfo
-    }
-    
-    private func getDeviceIdentifier() -> String? {
-        // Get detailed device information using system info with error handling
-        var systemInfo = utsname()
-        let result = uname(&systemInfo)
-        
-        // Check if uname call was successful
-        guard result == 0 else {
-            print("❌ Failed to get system info: \(result)")
-            contentLogger.error("❌ Failed to get system info: \(result)")
-            return nil
-        }
-        
-        let machineMirror = Mirror(reflecting: systemInfo.machine)
-        let identifier = machineMirror.children.reduce("") { identifier, element in
-            guard let value = element.value as? Int8, value != 0 else { return identifier }
-            return identifier + String(UnicodeScalar(UInt8(value)))
-        }
-        
-        // Validate identifier is not empty
-        guard !identifier.isEmpty else {
-            print("❌ Empty device identifier")
-            contentLogger.error("❌ Empty device identifier")
-            return nil
-        }
-        
-        print("🔍 Raw device identifier: \(identifier)")
-        contentLogger.info("🔍 Raw device identifier: \(identifier)")
-        
-        // Map device identifiers to readable names
-        let deviceNames: [String: String] = [
-            // iPhone models
-            "iPhone14,2": "iPhone 13 Pro",
-            "iPhone14,3": "iPhone 13 Pro Max",
-            "iPhone14,4": "iPhone 13 mini",
-            "iPhone14,5": "iPhone 13",
-            "iPhone14,6": "iPhone SE (3rd generation)",
-            "iPhone14,7": "iPhone 14",
-            "iPhone14,8": "iPhone 14 Plus",
-            "iPhone15,2": "iPhone 14 Pro",
-            "iPhone15,3": "iPhone 14 Pro Max",
-            "iPhone15,4": "iPhone 15",
-            "iPhone15,5": "iPhone 15 Plus",
-            "iPhone16,1": "iPhone 15 Pro",
-            "iPhone16,2": "iPhone 15 Pro Max",
-            "iPhone16,3": "iPhone 16",
-            "iPhone16,4": "iPhone 16 Plus",
-            "iPhone16,5": "iPhone 16 Pro",
-            "iPhone16,6": "iPhone 16 Pro Max",
-            "iPhone17,1": "iPhone 16 Pro",
-            "iPhone17,2": "iPhone 16 Pro Max",
-            
-            // iPad models
-            "iPad13,1": "iPad Air (5th generation)",
-            "iPad13,2": "iPad Air (5th generation)",
-            "iPad13,4": "iPad Pro (11-inch) (4th generation)",
-            "iPad13,5": "iPad Pro (11-inch) (4th generation)",
-            "iPad13,6": "iPad Pro (12.9-inch) (6th generation)",
-            "iPad13,7": "iPad Pro (12.9-inch) (6th generation)",
-            "iPad13,8": "iPad Pro (12.9-inch) (6th generation)",
-            "iPad13,9": "iPad Pro (12.9-inch) (6th generation)",
-            "iPad13,10": "iPad Pro (12.9-inch) (6th generation)",
-            "iPad13,11": "iPad Pro (12.9-inch) (6th generation)",
-            "iPad14,1": "iPad (10th generation)",
-            "iPad14,2": "iPad (10th generation)",
-            "iPad14,3": "iPad Air (6th generation)",
-            "iPad14,4": "iPad Air (6th generation)",
-            "iPad14,5": "iPad Pro (11-inch) (5th generation)",
-            "iPad14,6": "iPad Pro (11-inch) (5th generation)",
-            "iPad14,7": "iPad Pro (12.9-inch) (7th generation)",
-            "iPad14,8": "iPad Pro (12.9-inch) (7th generation)",
-            
-            // iPod models
-            "iPod9,1": "iPod touch (7th generation)"
-        ]
-        
-            let deviceName = deviceNames[identifier] ?? identifier
-            print("📱 Device name: \(deviceName)")
-            contentLogger.info("📱 Device name: \(deviceName)")
-            return deviceName
-    }
-    
-    private func getBatteryCapacity() -> String {
-        // Get the raw device identifier for accurate lookup
-        let rawIdentifier = getRawDeviceIdentifier() ?? "Unknown"
-        
-        // Comprehensive battery capacity database using raw identifiers
-        let batteryCapacities: [String: String] = [
-            // iPhone models - using raw identifiers for precise matching
-            "iPhone14,2": "3,095 mAh", // iPhone 13 Pro
-            "iPhone14,3": "4,352 mAh", // iPhone 13 Pro Max
-            "iPhone14,4": "2,438 mAh", // iPhone 13 mini
-            "iPhone14,5": "3,240 mAh", // iPhone 13
-            "iPhone14,6": "2,018 mAh", // iPhone SE (3rd generation)
-            "iPhone14,7": "3,279 mAh", // iPhone 14
-            "iPhone14,8": "4,325 mAh", // iPhone 14 Plus
-            "iPhone15,2": "3,200 mAh", // iPhone 14 Pro
-            "iPhone15,3": "4,323 mAh", // iPhone 14 Pro Max
-            "iPhone15,4": "3,349 mAh", // iPhone 15
-            "iPhone15,5": "4,383 mAh", // iPhone 15 Plus
-            "iPhone16,1": "3,274 mAh", // iPhone 15 Pro
-            "iPhone16,2": "4,441 mAh", // iPhone 15 Pro Max
-            "iPhone16,3": "3,561 mAh", // iPhone 16
-            "iPhone16,4": "4,606 mAh", // iPhone 16 Plus
-            "iPhone16,5": "3,561 mAh", // iPhone 16 Pro
-            "iPhone16,6": "4,676 mAh", // iPhone 16 Pro Max
-            "iPhone17,1": "3,561 mAh", // iPhone 16 Pro (alternative identifier)
-            "iPhone17,2": "4,676 mAh", // iPhone 16 Pro Max (alternative identifier)
-            
-            // iPad models
-            "iPad13,1": "7,606 mAh", // iPad Air (5th generation)
-            "iPad13,2": "7,606 mAh", // iPad Air (5th generation)
-            "iPad13,4": "7,538 mAh", // iPad Pro (11-inch) (4th generation)
-            "iPad13,5": "7,538 mAh", // iPad Pro (11-inch) (4th generation)
-            "iPad13,6": "10,758 mAh", // iPad Pro (12.9-inch) (6th generation)
-            "iPad13,7": "10,758 mAh", // iPad Pro (12.9-inch) (6th generation)
-            "iPad13,8": "10,758 mAh", // iPad Pro (12.9-inch) (6th generation)
-            "iPad13,9": "10,758 mAh", // iPad Pro (12.9-inch) (6th generation)
-            "iPad13,10": "10,758 mAh", // iPad Pro (12.9-inch) (6th generation)
-            "iPad13,11": "10,758 mAh", // iPad Pro (12.9-inch) (6th generation)
-            "iPad14,1": "7,606 mAh", // iPad (10th generation)
-            "iPad14,2": "7,606 mAh", // iPad (10th generation)
-            "iPad14,3": "8,134 mAh", // iPad Air (6th generation)
-            "iPad14,4": "8,134 mAh", // iPad Air (6th generation)
-            "iPad14,5": "7,538 mAh", // iPad Pro (11-inch) (5th generation)
-            "iPad14,6": "7,538 mAh", // iPad Pro (11-inch) (5th generation)
-            "iPad14,7": "10,758 mAh", // iPad Pro (12.9-inch) (7th generation)
-            "iPad14,8": "10,758 mAh", // iPad Pro (12.9-inch) (7th generation)
-            
-            // iPod models
-            "iPod9,1": "1,136 mAh" // iPod touch (7th generation)
-        ]
-        
-        let capacity = batteryCapacities[rawIdentifier] ?? "Unknown"
-        print("🔋 Battery capacity lookup: \(rawIdentifier) → \(capacity)")
-        contentLogger.info("🔋 Battery capacity lookup: \(rawIdentifier) → \(capacity)")
-        return capacity
-    }
-    
-    private func getRawDeviceIdentifier() -> String? {
-        // Get detailed device information using system info with error handling
-        var systemInfo = utsname()
-        let result = uname(&systemInfo)
-        
-        // Check if uname call was successful
-        guard result == 0 else {
-            print("❌ Failed to get system info: \(result)")
-            contentLogger.error("❌ Failed to get system info: \(result)")
-            return nil
-        }
-        
-        let machineMirror = Mirror(reflecting: systemInfo.machine)
-        let identifier = machineMirror.children.reduce("") { identifier, element in
-            guard let value = element.value as? Int8, value != 0 else { return identifier }
-            return identifier + String(UnicodeScalar(UInt8(value)))
-        }
-        
-        // Validate identifier is not empty
-        guard !identifier.isEmpty else {
-            print("❌ Empty device identifier")
-            contentLogger.error("❌ Empty device identifier")
-            return nil
-        }
-        
-        print("🔍 Raw device identifier: \(identifier)")
-        contentLogger.info("🔍 Raw device identifier: \(identifier)")
-        
-        return identifier
-    }
+
     
     private func getBatteryHealth() -> String {
         // iOS doesn't provide direct battery health via public APIs
@@ -685,7 +481,7 @@ struct ContentView: View {
         }
         
         // When real charging rate data is available, calculate actual wattage
-        let capacityString = getBatteryCapacity()
+        let capacityString = deviceSvc.profile?.capacitymAh.description ?? "—"
         let capacity = extractCapacityFromString(capacityString) // mAh
         
         // Calculate estimated wattage based on actual charging rate
@@ -1785,6 +1581,7 @@ struct InfoNavigationContent: View {
                 .font(.largeTitle)
                 .foregroundColor(.primary)
             
+            #if DEBUG
             // Debug section
             VStack(spacing: 15) {
                 Text("Debug Controls")
@@ -1823,9 +1620,12 @@ struct InfoNavigationContent: View {
                 .background(Color(.systemGray6))
                 .cornerRadius(10)
             }
+            #endif
             
+            #if DEBUG
             // Log Viewer
             LogViewerView(logMessages: .constant(globalLogMessages), showLogs: $showLogs)
+            #endif
             
             Spacer()
         }
@@ -1873,6 +1673,7 @@ struct OneSignalStatusView: View {
     }
 }
 
+#if DEBUG
 struct LogViewerView: View {
     @Binding var logMessages: [String]
     @Binding var showLogs: Bool
@@ -1958,6 +1759,16 @@ struct LogViewerView: View {
         showingCopyAlert = true
     }
 }
+#else
+struct LogViewerView: View {
+    @Binding var logMessages: [String]
+    @Binding var showLogs: Bool
+    
+    var body: some View {
+        EmptyView()
+    }
+}
+#endif
 
 struct LogMessagesView: View {
     let logMessages: [String]

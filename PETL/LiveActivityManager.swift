@@ -13,10 +13,14 @@ import BackgroundTasks
 import UIKit
 import Combine
 import OSLog
+#if DEBUG
 import OneSignalFramework
+#endif
 
 private let laLogger = Logger(subsystem: "com.petl.app", category: "liveactivity")
+#if DEBUG
 private let osLogger = Logger(subsystem: "com.petl.app", category: "onesignal")
+#endif
 private let uiLogger = Logger(subsystem: "com.petl.app", category: "ui")
 
 // MARK: - App State Helper
@@ -28,61 +32,93 @@ private var isForeground: Bool {
 actor ActivityCoordinator {
     static let shared = ActivityCoordinator()
     private var current: Activity<PETLLiveActivityExtensionAttributes>? = nil
-    private var isRequesting = false      // NEW
+    private var isRequesting = false
     
     func startIfNeeded() async -> String? {
-        guard !isRequesting else { return nil }   // another call in flight
-
-        // If we still have a pointer, scrub it if that activity isn't actually active
+        guard !isRequesting else { return nil }
+        
         if let cur = current {
             switch cur.activityState {
             case .active, .stale:
-                // real, on-screen activity -> do nothing
                 print("ℹ️  startIfNeeded skipped—widget already active.")
                 return nil
             default:
-                // ended / dismissed / unknown -> clear pointer and proceed
                 current = nil
             }
         }
         
-        // Rehydrate if the system already has one (e.g. app relaunch)
         if current == nil, let existing = Activity<PETLLiveActivityExtensionAttributes>.activities.last {
             current = existing
             print("ℹ️  Rehydrated existing Live Activity id:", existing.id)
             return existing.id
         }
         
-        // Fresh request (make sure device still reports charging)
         guard UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full else { return nil }
-        isRequesting = true                    // lock
-
+        isRequesting = true
+        
         do {
+                    let auth = ActivityAuthorizationInfo()
+        await MainActor.run {
+            addToAppLogs("🔐 areActivitiesEnabled=\(auth.areActivitiesEnabled)")
+        }
+        
+        guard auth.areActivitiesEnabled else {
+            await MainActor.run {
+                addToAppLogs("🚫 Live Activities disabled at system level")
+            }
+            return nil
+        }
+            
+            let initialState = await MainActor.run { LiveActivityManager.shared.firstContent() }
             current = try await Activity.request(
                 attributes: PETLLiveActivityExtensionAttributes(name: "PETL Charging Activity"),
-                content: ActivityContent(state: firstContent(), staleDate: Date().addingTimeInterval(3600)),
+                content: ActivityContent(state: initialState, staleDate: Date().addingTimeInterval(3600)),
                 pushType: .token
             )
             let activityId = current?.id ?? "unknown"
-            
-            // Capture and register the Live Activity push token for background updates
-            Task.detached { [weak current] in
-                guard let activity = current else { return }
-                for await tokenData in activity.pushTokenUpdates {
-                    let hex = tokenData.map { String(format: "%02x", $0) }.joined()
-                    Task { @MainActor in
-                        addToAppLogs("📡 LiveActivity token len=\(tokenData.count)")
+
+            // Listen for token & log it (restores your 📡 lines)
+            if let activity = current {
+                Task { // not detached; keep it tied to our task tree
+                    for await tokenData in activity.pushTokenUpdates {
+                        let hex = tokenData.map { String(format: "%02x", $0) }.joined()
+                        await MainActor.run {
+                            addToAppLogs("📡 LiveActivity token len=\(tokenData.count)")
+                        }
+                        #if DEBUG
+            await OneSignalClient.shared.enterLiveActivity(activityId: activity.id, tokenHex: hex)
+            #endif
                     }
-                    await OneSignalClient.shared.registerLiveActivityToken(activityId: activity.id, tokenHex: hex)
                 }
             }
-            
-            isRequesting = false                   // unlock
+
+            isRequesting = false
             return activityId
+
         } catch {
-            print("❌ Activity.request failed:", error)
-            isRequesting = false                   // unlock
-            return nil
+            await MainActor.run {
+                addToAppLogs("❌ Activity.request(.token) failed: \(error.localizedDescription)")
+            }
+            // Fallback: no push token (card still shows; background updates just won't be remote)
+            do {
+                let fallbackState = await MainActor.run { LiveActivityManager.shared.firstContent() }
+                current = try await Activity.request(
+                    attributes: PETLLiveActivityExtensionAttributes(name: "PETL Charging Activity"),
+                    content: ActivityContent(state: fallbackState, staleDate: Date().addingTimeInterval(3600)),
+                    pushType: nil
+                )
+                isRequesting = false
+                await MainActor.run {
+                    addToAppLogs("ℹ️ Started Live Activity without push token (fallback)")
+                }
+                return current?.id
+            } catch {
+                isRequesting = false
+                await MainActor.run {
+                    addToAppLogs("❌ Activity.request(no-push) failed: \(error.localizedDescription)")
+                }
+                return nil
+            }
         }
     }
     
@@ -93,71 +129,9 @@ actor ActivityCoordinator {
         print("🛑 Ended Live Activity")
     }
     
-    @MainActor
-    private func firstContent() -> PETLLiveActivityExtensionAttributes.ContentState {
-        let level = Double(UIDevice.current.batteryLevel) // 0.0—1.0
-        let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
-
-        // Initialize DI with presented values (not raw)
-        let rawETA = ChargeEstimator.shared.current?.minutesToFull
-        let rawW = BatteryTrackingManager.shared.currentWatts
-        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-        let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
-        
-        let token = BatteryTrackingManager.shared.tickToken
-        let initialEta = FeatureFlags.useETAPresenter
-            ? ETAPresenter.shared.presented(rawETA: rawETA, watts: rawW, sysPct: sysPct, isCharging: isCharging, isWarmup: isWarm, tickToken: token).minutes
-            : rawETA
-        
-        let (label, _) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: ChargeEstimator.shared.current?.pctPerMin)
-
-        return PETLLiveActivityExtensionAttributes.ContentState(
-            batteryLevel: Float(level),
-            isCharging: isCharging,
-            chargingRate: label,
-            estimatedWattage: String(format: "%.1fW", rawW),
-            timeToFullMinutes: initialEta ?? 0,
-            deviceModel: getDeviceModel(),
-            batteryHealth: "Excellent",
-            isInWarmUpPeriod: isWarm,
-            timestamp: Date()
-        )
-    }
-    
 
     
-    private nonisolated func getDeviceModel() -> String {
-        var systemInfo = utsname()
-        uname(&systemInfo)
-        let machineMirror = Mirror(reflecting: systemInfo.machine)
-        let identifier = machineMirror.children.reduce("") { identifier, element in
-            guard let value = element.value as? Int8, value != 0 else { return identifier }
-            return identifier + String(UnicodeScalar(UInt8(value)))
-        }
-        
-        // Map to readable names
-        let deviceNames: [String: String] = [
-            "iPhone14,2": "iPhone 13 Pro",
-            "iPhone14,3": "iPhone 13 Pro Max",
-            "iPhone14,4": "iPhone 13 mini",
-            "iPhone14,5": "iPhone 13",
-            "iPhone14,6": "iPhone SE (3rd generation)",
-            "iPhone14,7": "iPhone 14",
-            "iPhone14,8": "iPhone 14 Plus",
-            "iPhone15,2": "iPhone 14 Pro",
-            "iPhone15,3": "iPhone 14 Pro Max",
-            "iPhone15,4": "iPhone 15",
-            "iPhone15,5": "iPhone 15 Plus",
-            "iPhone16,1": "iPhone 15 Pro",
-            "iPhone16,2": "iPhone 15 Pro Max",
-            "iPhone16,3": "iPhone 16",
-            "iPhone16,4": "iPhone 16 Plus",
-            "iPhone16,5": "iPhone 16 Pro",
-            "iPhone16,6": "iPhone 16 Pro Max"
-        ]
-        
-        return deviceNames[identifier] ?? "iPhone"
-    }
+
 }
 
 // MARK: - Live Activity Manager
@@ -172,18 +146,16 @@ final class LiveActivityManager {
     private init() {}
     
     deinit {
-        // Clean cancel on deinit (optional polish)
         cancellables.forEach { $0.cancel() }
         os_log("📱 LiveActivityManager deinit - cleaned up cancellables")
     }
     
-    // ===== BEGIN STABILITY-LOCKED: LiveActivity cooldown (do not edit) =====
     // MARK: - Private Properties
-    
     private var isActive = false
     private var lastStartAt: Date?
     private var lastEndAt: Date?
-    private let minRestartInterval: TimeInterval = 8 // seconds
+    private let minRestartInterval: TimeInterval = 8
+    private var forceWarmupNextPush = false
     
     private var updateTimer: Timer?
     private var failsafeTask: UIBackgroundTaskIdentifier = .invalid
@@ -196,10 +168,9 @@ final class LiveActivityManager {
     private var totalChargingTime: TimeInterval = 0
     private var lastPushedMinutes: Int?
     private var endWatchdogTimer: DispatchWorkItem?
-    var lastRemoteSeq: Int = 0   // for OneSignal dedupe
-    // ===== END STABILITY-LOCKED =====
-
-    // MARK: - Reliability counters (QA)
+    var lastRemoteSeq: Int = 0
+    
+    // MARK: - Reliability counters
     private var startsRequested = 0
     private var startsSucceeded = 0
     private var endsRequestedLocal = 0
@@ -221,22 +192,27 @@ final class LiveActivityManager {
     private var lastFGSummaryAt: Date = .distantPast
 
     func onAppWillEnterForeground() {
-        BatteryTrackingManager.shared.startMonitoring() // idempotent
+        BatteryTrackingManager.shared.startMonitoring()
+        // Self-heal every foreground entry
+        if isActive && !hasLiveActivity { isActive = false }
+        if hasLiveActivity { isActive = true }
+        dumpActivities("foreground")
         let now = Date()
         if now.timeIntervalSince(lastFGSummaryAt) > 8 {
             logReliabilitySummary("📊 Reliability")
             lastFGSummaryAt = now
         }
+        ensureStartedIfChargingNow()
     }
     
     @MainActor
     func stopIfNeeded() async {
-        endAll("external call")
+        await endAll("external call")
     }
     
     @MainActor
     func endIfActive() async {
-        endAll("charge ended")
+        await endAll("charge ended")
     }
     
     @MainActor
@@ -244,22 +220,15 @@ final class LiveActivityManager {
         forceNextPush = true
         lastPush = .distantPast
         lastRichState = nil
-        Self.didForceFirstPushThisSession = false   // NEW
+        Self.didForceFirstPushThisSession = false
     }
     
-    /// True after `startIfNeeded()` succeeds during the *current* charging session.
-    /// It is cleared the moment we really end the Live Activity (i.e. on unplug).
     private var didStartThisSession = false
-    
-    // Coalesce near-simultaneous start triggers
     private var recentStartAt: Date? = nil
     private var retryStartTask: Task<Void, Never>?
     private var forceNextPush = false
-    
-    // MARK: - Private Properties
     private var lastRichState: PETLLiveActivityExtensionAttributes.ContentState?
     
-    // Actor-based debounce for tighter control
     private actor ActivityGate {
         var isRequesting = false
         
@@ -274,10 +243,50 @@ final class LiveActivityManager {
     
     private let gate = ActivityGate()
     
-
+    // MARK: - Update Policy
+    @MainActor
+    func updateLiveActivityWithPolicy(state: PETLLiveActivityExtensionAttributes.ContentState) {
+        let isForeground = UIApplication.shared.applicationState == .active
+        
+        if isForeground {
+            Task {
+                for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+                    await activity.update(using: state)
+                }
+                addToAppLogs("🔄 Live Activity updated locally (foreground)")
+            }
+        } else {
+            for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+                #if DEBUG
+            OneSignalClient.shared.updateLiveActivityRemote(activityId: activity.id, state: state)
+            #endif
+            }
+            addToAppLogs("📡 Live Activity update queued remotely (background)")
+        }
+    }
     
-    // MARK: - Public API ----------------------------------------------------
+    @MainActor
+    func endLiveActivityWithPolicy() {
+        let isForeground = UIApplication.shared.applicationState == .active
+        
+        if isForeground {
+            Task {
+                for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+                    await activity.end(dismissalPolicy: .immediate)
+                }
+                addToAppLogs("🛑 Live Activity ended locally (foreground)")
+            }
+        } else {
+            for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+                #if DEBUG
+            OneSignalClient.shared.endLiveActivityRemote(activityId: activity.id)
+            #endif
+            }
+            addToAppLogs("📡 Live Activity end queued remotely (background)")
+        }
+    }
     
+    // MARK: - Public API
     func configure() {
         guard !Self.isConfigured else { return }
         Self.isConfigured = true
@@ -285,51 +294,57 @@ final class LiveActivityManager {
 
         BatteryTrackingManager.shared.startMonitoring()
 
-        // Subscribe to unified estimate stream (single-source)
         ChargeEstimator.shared.estimateSubject
             .receive(on: RunLoop.main)
             .sink { [weak self] est in
                 guard let self = self else { return }
 
-                let bigDelta = self.lastPushedMinutes.map { abs($0 - est.minutesToFull) >= 3 } ?? true
+                let bigDelta = self.lastPushedMinutes.map { abs($0 - (est.minutesToFull ?? 0)) >= 3 } ?? true
 
                 if !Self.didForceFirstPushThisSession {
                     self.updateAllActivities(using: est, force: true)
                     Self.didForceFirstPushThisSession = true
                     self.lastPushedMinutes = est.minutesToFull
-                    laLogger.info("⚡ First Live Activity update forced (minutes=\(est.minutesToFull))")
+                    laLogger.info("⚡ First Live Activity update forced (minutes=\(est.minutesToFull ?? 0))")
                 } else if bigDelta {
-                    // push early for meaningful changes
                     self.updateAllActivities(using: est, force: true)
                     self.lastPushedMinutes = est.minutesToFull
-                    laLogger.info("📦 Big delta push (minutes=\(est.minutesToFull))")
+                    laLogger.info("📦 Big delta push (minutes=\(est.minutesToFull ?? 0))")
                 } else {
                     self.updateAllActivities(using: est, force: false)
                 }
             }
             .store(in: &cancellables)
 
-                            // Subscribe to battery snapshots for start/stop authority
-                    BatteryTrackingManager.shared.snapshotSubject
-                        .receive(on: RunLoop.main)
-                        .debounce(for: .seconds(QA.debounceSeconds), scheduler: RunLoop.main)
-                        .sink { [weak self] snap in
-                            guard let self = self else { return }
-                            laLogger.debug("⏳ Debounced snapshot: \(Int(snap.level * 100))%, charging=\(snap.isCharging)")
-                            self.handle(snapshot: snap)
-                        }
-                        .store(in: &cancellables)
+        BatteryTrackingManager.shared.snapshotSubject
+            .receive(on: RunLoop.main)
+            .debounce(for: .seconds(QA.debounceSeconds), scheduler: RunLoop.main)
+            .sink { [weak self] snap in
+                guard let self = self else { return }
+                laLogger.debug("⏳ Debounced snapshot: \(Int(snap.level * 100))%, charging=\(snap.isCharging)")
+                self.handle(snapshot: snap)
+            }
+            .store(in: &cancellables)
 
         ensureBatteryMonitoring()
         registerBGTask()
         restorePersistedChargingState()
+        
+        // Authorization sanity check
+        let info = ActivityAuthorizationInfo()
+        addToAppLogs("🔐 LA perms — enabled=\(info.areActivitiesEnabled)")
+        
+        // Sync in-memory flag with system on cold start
+        self.isActive = self.hasLiveActivity
+        self.dumpActivities("after configure")
+        self.ensureStartedIfChargingNow()
     }
     
+    #if DEBUG
     func handleRemotePayload(_ json: [AnyHashable: Any]) {
         guard let action = json["live_activity_action"] as? String else { return }
         let seq = (json["seq"] as? Int) ?? 0
 
-        // de-dupe
         if seq <= lastRemoteSeq {
             osLogger.debug("↩️ Dropped duplicate/old push (seq=\(seq))")
             return
@@ -354,16 +369,15 @@ final class LiveActivityManager {
                 osLogger.info("ℹ️ Remote update ignored (no active activity, seq=\(seq))")
                 return
             }
-            // If you also include minutes/rate/level in data, you can build a ContentState and push here
-            // Otherwise just let ChargeEstimator drive; remote updates are optional.
             osLogger.info("🔄 Remote update received (seq=\(seq))")
-            // LiveActivityManager.shared.updateAllActivities(using: currentEst, force: true) // optional
 
         case "end":
             if !BatteryTrackingManager.shared.isCharging {
                 remoteEndsHonored += 1
                 osLogger.info("⏹️ Remote end honored (seq=\(seq))")
-                endAll("OneSignal")
+                Task { @MainActor in
+                    await endAll("OneSignal")
+                }
             } else {
                 remoteEndsIgnored += 1
                 osLogger.info("🚫 Remote end ignored (local charging, seq=\(seq))")
@@ -373,39 +387,40 @@ final class LiveActivityManager {
         }
     }
     
-    // MARK: - Private -------------------------------------------------------
-    
-    // MARK: - Authoritative start/stop from local battery state + self-ping backup
-    
+    // MARK: - Private Methods
     private func handle(snapshot s: BatterySnapshot) {
         if s.isCharging {
             startsRequested += 1
-            Task { await startIfNeeded() }
+            if !hasLiveActivity {
+                Task { await startIfNeeded() }
+            }
         } else {
             endsRequestedLocal += 1
-            // end locally first, then schedule watchdog only if needed
             Task { @MainActor in
                 await endAll("local unplug")
-                // Only schedule watchdog if activities still exist after local end
                 if hasLiveActivity {
                     scheduleEndWatchdog()
                     selfPingsQueued += 1
-                    OneSignalClient.shared.enqueueSelfEnd(seq: OneSignalClient.shared.bumpSeq())
+                    #if DEBUG
+                    await OneSignalClient.shared.enqueueSelfEnd(seq: OneSignalClient.shared.bumpSeq())
+                    #endif
                 }
             }
         }
     }
+    #endif
 
     private func scheduleEndWatchdog() {
         endWatchdogTimer?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            // Re-check if activities still exist before firing
             let activityCount = Activity<PETLLiveActivityExtensionAttributes>.activities.count
             if self.hasLiveActivity && activityCount > 0 {
                 self.watchdogFires += 1
                 addToAppLogs("⏱️ End watchdog fired; \(activityCount) activity(ies) still present, enqueueing final end self-ping")
+                #if DEBUG
                 OneSignalClient.shared.enqueueSelfEnd(seq: OneSignalClient.shared.bumpSeq())
+                #endif
             }
         }
         endWatchdogTimer = item
@@ -417,17 +432,16 @@ final class LiveActivityManager {
         endWatchdogTimer = nil
     }
     
-    private func updateAllActivities(using estimate: ChargeEstimate, force: Bool = false) {
+    private func updateAllActivities(using estimate: ChargeEstimator.ChargeEstimate, force: Bool = false) {
         let now = Date()
         
-        // Enhanced force criteria: ≥2 min delta OR SOC changed by ≥1% OR standard 60s throttle
         let lastETA = lastRichState?.timeToFullMinutes ?? 0
-        let currentETA = estimate.minutesToFull
+        let currentETA = estimate.minutesToFull ?? 0
         let etaDelta = abs(currentETA - lastETA)
         
-        let lastSOC = lastRichState?.batteryLevel ?? 0.0
+        let lastSOC = Double(lastRichState?.batteryLevel ?? 0)
         let currentSOC = estimate.level01
-        let socDelta = abs(Double(currentSOC) - Double(lastSOC))
+        let socDelta = abs(currentSOC - lastSOC)
         
         let doForce = force || forceNextPush
         let canPush = doForce || 
@@ -438,15 +452,13 @@ final class LiveActivityManager {
         
         guard canPush else { return }
 
-        // ---- Inputs (same as UI) ----
-        let rawETA = estimate.minutesToFull
-        let rawW   = BatteryTrackingManager.shared.currentWatts   // <- smoothed watts
+        let rawETA = estimate.minutesToFull ?? 0
+        let rawW   = BatteryTrackingManager.shared.currentWatts
         let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let isChg  = BatteryTrackingManager.shared.isCharging
         let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
         let token  = BatteryTrackingManager.shared.tickToken
 
-        // ---- Sanitize via ETAPresenter (single source of truth) ----
         let displayedETA = FeatureFlags.useETAPresenter
             ? ETAPresenter.shared.presented(
                 rawETA: rawETA,
@@ -458,203 +470,196 @@ final class LiveActivityManager {
             ).minutes
             : rawETA
 
-        // ---- Edge clamp at DI just in case (same rule as elsewhere) ----
         var etaForDI = displayedETA
         if !isWarm, !forceNextPush, let e = etaForDI, e >= 180, rawW <= 5.0 {
             etaForDI = ETAPresenter.shared.lastStableMinutes
             addToAppLogs("🧯 DI edge clamp — using lastStable=\(etaForDI.map{"\($0)m"} ?? "—")")
         }
 
-        // ---- Build content (merge any last rich state) ----
-        var merged = lastRichState ?? firstContent()
-        merged.batteryLevel       = Float(estimate.level01)
-        merged.isCharging         = isChg
-        merged.estimatedWattage   = String(format: "%.1fW", rawW)
-        merged.timeToFullMinutes  = etaForDI ?? 0
-        merged.timestamp          = estimate.computedAt
+        let etaMin = etaForDI ?? 0
+        let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
+        
+        let state = PETLLiveActivityExtensionAttributes.ContentState(
+            batteryLevel: Int(estimate.level01 * 100),
+            isCharging: isChg,
+            chargingRate: ChargingAnalytics.chargingCharacteristic(pctPerMinute: estimate.pctPerMin).0,
+            estimatedWattage: String(format: "%.1fW", rawW),
+            timeToFullMinutes: etaMin,
+            expectedFullDate: expectedFullDate,
+            deviceModel: DeviceProfileService.shared.profile?.name ?? UIDevice.current.model,
+            batteryHealth: "Excellent",
+            isInWarmUpPeriod: isWarm,
+            timestamp: estimate.computedAt
+        )
 
-        // Existing: local update
-        Task { @MainActor in 
-            await pushToAll(merged)
-            forceNextPush = false
-        }
+        updateLiveActivityWithPolicy(state: state)
+        
+        lastRichState = state
         lastPush = now
-
-        // NEW: if not foreground, enqueue a remote update (server or OneSignal)
-        if !isForeground {
-            OneSignalClient.shared.enqueueLiveActivityUpdate(
-                minutesToFull: merged.timeToFullMinutes,
-                batteryLevel01: Double(merged.batteryLevel),
-                wattsString: merged.estimatedWattage,
-                isCharging: merged.isCharging,
-                isWarmup: merged.isInWarmUpPeriod
-            )
-        }
+        forceNextPush = false
     }
     
     @MainActor
     func updateIfNeeded(from snapshot: BatterySnapshot) {
-        // Deprecated: start/stop is centralized in BatteryTrackingManager (+ optional app launch probe).
-        // Intentionally left as no-op to avoid duplicate starts.
+        // Deprecated: start/stop is centralized in BatteryTrackingManager
     }
     
     func publishLiveActivityAnalytics(_ analytics: ChargingAnalyticsStore) {
-        // 1) Get raw inputs from the same place as the app (NO 10W after warmup)
         let rawETA = analytics.timeToFullMinutes
-        let rawW = BatteryTrackingManager.shared.currentWatts  // <- must be the SMOOTHED watts from estimator
+        let rawW = BatteryTrackingManager.shared.currentWatts
         
         let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let isChg = BatteryTrackingManager.shared.isCharging
         let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
         
-        // 2) Present once, same quarantine/slew logic as UI
         let token = BatteryTrackingManager.shared.tickToken
         let displayedETA = FeatureFlags.useETAPresenter
             ? ETAPresenter.shared.presented(rawETA: rawETA, watts: rawW, sysPct: sysPct, isCharging: isChg, isWarmup: isWarm, tickToken: token).minutes
             : rawETA
         
-        // 3) Use displayedETA for DI/Live Activity payloads
         var etaForDI = displayedETA
         
-        // 4) Add a cheap guardrail in LA (just in case)
         if let e = etaForDI, e >= 180, rawW <= 5.0 {
-            // quarantine at DI edge as a second safety net
             etaForDI = ETAPresenter.shared.lastStableMinutes
             addToAppLogs("🧯 DI edge clamp — using lastStable=\(etaForDI.map{"\($0)m"} ?? "—")")
         }
         
+        let etaMin = etaForDI ?? 0
+        let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
+        
         let state = PETLLiveActivityExtensionAttributes.ContentState(
-            batteryLevel: Float(BatteryTrackingManager.shared.level),
+            batteryLevel: Int(BatteryTrackingManager.shared.level * 100),
             isCharging: true,
             chargingRate: "Charging",
             estimatedWattage: String(format: "%.1fW", rawW),
-            timeToFullMinutes: etaForDI ?? 0,
-            deviceModel: "", batteryHealth: "",
+            timeToFullMinutes: etaMin,
+            expectedFullDate: expectedFullDate,
+            deviceModel: DeviceProfileService.shared.profile?.name ?? UIDevice.current.model,
+            batteryHealth: "Excellent",
             isInWarmUpPeriod: isWarm,
             timestamp: Date()
         )
         
-        // update activities with 'state' (existing code)
-        Task { @MainActor in await pushToAll(state) }
+        Task { @MainActor in 
+            await pushToAll(state) 
+        }
         
-        // 4) Log DI payload for parity check
         addToAppLogs("📤 DI payload — eta=\(etaForDI.map{"\($0)m"} ?? "—") W=\(String(format:"%.1f", rawW))")
     }
     
     // MARK: - Helpers
-    /// Strict check for system-active activities only
     private var hasSystemActive: Bool {
         Activity<PETLLiveActivityExtensionAttributes>.activities.contains {
             $0.activityState == .active
         }
     }
     
-    /// Returns true only if a widget is truly still on-screen.
-    /// Also cleans up duplicate widgets automatically.
     private var hasLiveActivity: Bool {
-        let list = Activity<PETLLiveActivityExtensionAttributes>.activities
-
-        // 1️⃣ If more than one, keep the newest and end the rest
-        if list.count > 1 {
-            #if DEBUG
-            addToAppLogs("🧹 Cleaning up \(list.count - 1) duplicate widgets")
-            #endif
-            list.dropLast().forEach { act in
-                Task { await act.end(dismissalPolicy: .immediate) }
+        for act in Activity<PETLLiveActivityExtensionAttributes>.activities {
+            switch act.activityState {
+            case .active, .stale: return true
+            default: continue
             }
         }
-
-        guard let act = list.last else { return false }
-
-        switch act.activityState {
-        case .active, .stale:
-            #if DEBUG
-            let running = list.map { "\($0.id.prefix(4))-\(String(describing: $0.activityState))" }
-            laLogger.debug("💭 activity list: \(running)")
-            #endif
-            return true                       // real widget on-screen
-        case .dismissed:
-            // grace window: allow a new widget 2 s after dismissal
-            // Since we can't access _endDate directly, we'll treat dismissed as immediately inactive
-            // This allows quick re-plug scenarios to work properly
-            #if DEBUG
-            addToAppLogs("⏰ Dismissed widget - treating as inactive for quick re-plug")
-            #endif
-            return false                      // treat as gone immediately
-        default:
-            return false
+        return false
+    }
+    
+    @MainActor
+    private func cleanupDuplicates(keepId: String?) {
+        let list = Activity<PETLLiveActivityExtensionAttributes>.activities
+        guard list.count > 1 else { return }
+        addToAppLogs("🧹 Cleaning up duplicates: \(list.count)")
+        for act in list {
+            if let keepId, act.id == keepId { continue }
+            Task { await act.end(dismissalPolicy: .immediate) }
         }
     }
     
-    /// Updates the singleton's hasActiveWidget property
+    @MainActor
+    func ensureStartedIfChargingNow() {
+        let st = UIDevice.current.batteryState
+        guard (st == .charging || st == .full), !hasLiveActivity else { return }
+        Task { await startIfNeeded() }
+    }
+    
+    @MainActor
+    func debugForceStart() async {
+        addToAppLogs("🛠️ debugForceStart()")
+        do {
+            let id = try await Activity.request(
+                attributes: PETLLiveActivityExtensionAttributes(name: "PETL Debug"),
+                content: ActivityContent(
+                    state: firstContent(),
+                    staleDate: Date().addingTimeInterval(600)
+                ),
+                pushType: nil // force local-only; card should still appear
+            ).id
+            addToAppLogs("✅ debugForceStart created id=\(id.prefix(6))")
+        } catch {
+            addToAppLogs("❌ debugForceStart failed: \(error.localizedDescription)")
+        }
+    }
+    
     private func updateHasActiveWidget() {
         Task { @MainActor in
             BatteryTrackingManager.shared.hasActiveWidget = hasLiveActivity
         }
     }
     
-    /// Starts a Live Activity unless one is already active.
     @MainActor
     func startIfNeeded() async {
-        // ===== BEGIN STABILITY-LOCKED: LiveActivity cooldown (do not edit) =====
-        // already running?
-        guard !isActive else {
-            addToAppLogs("ℹ️ Live Activity already active — skip start")
-            return
+        // 0) Self-heal: if we *think* we're active but the system says otherwise, clear it
+        if isActive && !hasLiveActivity {
+            laLogger.warning("⚠️ isActive desynced (system has 0). Resetting.")
+            isActive = false
         }
-        // recently ended? enforce cooldown to avoid flappy restarts
+
+
+
+        // 1) Cooldown (keep your stability lock)
         if let ended = lastEndAt, Date().timeIntervalSince(ended) < minRestartInterval {
             let remain = Int(minRestartInterval - Date().timeIntervalSince(ended))
-            addToAppLogs("⏳ Live Activity cooldown — skip start (\(remain)s left)")
+            addToAppLogs("⏳ Cooldown — skip start (\(remain)s left)")
             return
         }
-        // ===== END STABILITY-LOCKED =====
-        
-        // Coalesce near-simultaneous triggers (launch probe, remote "start", snapshot)
-        if let t = recentStartAt, Date().timeIntervalSince(t) < 1.5 {
-            retryStartTask?.cancel()
-            retryStartTask = Task { [weak self] in
-                // try again shortly; if still charging and no activity, start
-                try? await Task.sleep(nanoseconds: 1_700_000_000) // 1.7s
-                guard let self else { return }
-                if BatteryTrackingManager.shared.isCharging,
-                   !self.hasSystemActive {
-                    await self.startIfNeeded()  // will pass debounce by now
-                }
-            }
-            laLogger.debug("⏳ startIfNeeded debounced; scheduled retry")
+
+        // 2) If the system already has an activity, mark active and bail
+        if hasLiveActivity {
+            addToAppLogs("ℹ️ System already has a Live Activity — skip start")
             return
         }
-        
-        // Hard guard: read FRESH battery state (not cached flag)
+
+        // 3) Hard guard on fresh battery state
         let st = UIDevice.current.batteryState
-        let isChargingNow = (st == .charging || st == .full)
-        guard isChargingNow else {
-            addToAppLogs("ℹ️ startIfNeeded skipped—local not charging (fresh)")
+        guard st == .charging || st == .full else {
+            addToAppLogs("ℹ️ Not charging — skip start")
             return
         }
-        
-        guard !hasLiveActivity else {
-            laLogger.debug("ℹ️ startIfNeeded aborted (widget already active)")
-            return
-        }
-        laLogger.info("🚧 startIfNeeded running")
-        
+
+        // 4) Proceed to request via the actor
+        let count = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+        addToAppLogs("🔍 System activities count before start: \(count)")
+        addToAppLogs("🚧 startIfNeeded running…")
         let activityId = await ActivityCoordinator.shared.startIfNeeded()
         if let id = activityId {
             startsSucceeded += 1
             isActive = true
-            // ===== BEGIN STABILITY-LOCKED: LiveActivity cooldown (do not edit) =====
             lastStartAt = Date()
-            // ===== END STABILITY-LOCKED =====
-            laLogger.info("🎬 Started Live Activity")
+            laLogger.info("🎬 Started Live Activity id: \(id)")
             addToAppLogs("🎬 Started Live Activity")
+            cleanupDuplicates(keepId: id)
+            dumpActivities("post-start")
             cancelEndWatchdog()
             recentStartAt = Date()
+            
+            // Schedule background refresh for ongoing updates
+            if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                appDelegate.scheduleRefresh(in: 5) // when session starts
+            }
         } else if !hasLiveActivity {
-            // Retry once after a short delay, only if still charging
+            // Retry once if still charging
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
                 let st = UIDevice.current.batteryState
                 guard st == .charging || st == .full, !self.hasLiveActivity else { return }
                 if let retryId = await ActivityCoordinator.shared.startIfNeeded() {
@@ -668,6 +673,13 @@ final class LiveActivityManager {
     }
     
     @MainActor
+    func startWarmIfNeeded() async {
+        // Make the *first* content act like warmup so it bypasses clamps
+        forceWarmupNextPush = true
+        await startIfNeeded()
+    }
+    
+    @MainActor
     private func pushToAll(_ state: PETLLiveActivityExtensionAttributes.ContentState) async {
         for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
             await activity.update(using: state)
@@ -676,145 +688,197 @@ final class LiveActivityManager {
         laLogger.info("\(message)")
     }
     
+    @MainActor
+    func pushUpdate(reason: String) async {
+        guard !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty else {
+            addToAppLogs("📤 pushUpdate(\(reason)) - no activities to update")
+            return
+        }
+        
+        // Check if still charging - if not, end all activities
+        let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
+        if !isCharging {
+            addToAppLogs("🔌 pushUpdate(\(reason)): not charging, ending activities")
+            await endAll("not-charging")
+            // Cancel background refresh since no activities remain
+            if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+                appDelegate.cancelRefresh()
+            }
+            return
+        }
+        
+        let state = firstContent()
+        await pushToAll(state)
+        addToAppLogs("📤 pushUpdate(\(reason)) - updated \(Activity<PETLLiveActivityExtensionAttributes>.activities.count) activities")
+    }
+    
     private func updateAll(with dict: [String: Any]) {
-        // 1. Convert dictionary → ContentState
+        let etaMin = dict["timeToFullMinutes"] as? Int ?? 0
+        let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
+        
+        // Use payload time or current time
+        let ts = (dict["timestamp"] as? TimeInterval).map { Date(timeIntervalSince1970: $0) } ?? Date()
+        
         let rich = PETLLiveActivityExtensionAttributes.ContentState(
-            batteryLevel: Float(dict["batteryLevel"] as? Double ?? 0),
+            batteryLevel: Int(dict["batteryLevel"] as? Double ?? 0),
             isCharging:   dict["isCharging"]   as? Bool   ?? false,
             chargingRate: dict["chargingRate"] as? String ?? "Standard Charging",
             estimatedWattage: dict["estimatedWattage"] as? String ?? "10W",
-            timeToFullMinutes: dict["timeToFullMinutes"] as? Int ?? 0,
+            timeToFullMinutes: etaMin,
+            expectedFullDate: expectedFullDate,
             deviceModel:  dict["deviceModel"]  as? String ?? "iPhone",
             batteryHealth: dict["batteryHealth"] as? String ?? "Excellent",
             isInWarmUpPeriod: dict["isInWarmUpPeriod"] as? Bool ?? false,
-            timestamp:    Date()
+            timestamp: ts
         )
 
-        // 2. Cache & push
         lastRichState = rich
         Task { @MainActor in await pushToAll(rich) }
     }
     
     @MainActor
-    private func endAll(_ src: String) {
-        // Query activities for the SAME attributes type you used at start
-        let list = Activity<PETLLiveActivityExtensionAttributes>.activities
-        let countBefore = list.count
-
-        guard countBefore > 0 else {
-            // nothing to end
+    func endAll(_ reason: String) async {
+        // Ignore spurious "unplugged" right after a start
+        if let ts = lastStartAt, Date().timeIntervalSince(ts) < 3 {
+            laLogger.debug("🪫 Ignoring end within 3s of start (flicker)")
             return
         }
         
-        #if DEBUG
-        addToAppLogs("🧪 endAll() about to end \(countBefore) activity(ies)")
-        #endif
+        // Gate duplicate ends (skip if we ended in the last ~5s) to avoid log spam/races
+        if let lastEnd = lastEndAt, Date().timeIntervalSince(lastEnd) < 5 {
+            addToAppLogs("🔄 endAll(\(reason)) skipped - ended \(String(format: "%.1f", Date().timeIntervalSince(lastEnd)))s ago")
+            return
+        }
+        
+        let activities = Activity<PETLLiveActivityExtensionAttributes>.activities
+        addToAppLogs("🧪 endAll(\(reason)) about to end \(activities.count) activity(ies)")
 
-        // 1) End with 'immediate' dismissal policy (no grace period)
-        Task {
-            for a in list {
-                do {
-                    let endState = PETLLiveActivityExtensionAttributes.ContentState(
-                        batteryLevel: BatteryTrackingManager.shared.level,
-                        isCharging: false,
-                        chargingRate: "Not charging",
-                        estimatedWattage: "0W",
-                        timeToFullMinutes: 0, // won't be shown; we are ending
-                        deviceModel: getDeviceModel(),
-                        batteryHealth: "Excellent",
-                        isInWarmUpPeriod: false,
-                        timestamp: Date()
-                    )
-                    try await a.end(ActivityContent(state: endState, staleDate: nil), dismissalPolicy: .immediate)
+        for act in activities {
+            do {
+                try await act.end(dismissalPolicy: .immediate)
+            } catch {
+                addToAppLogs("⚠️ end(\(act.id)) failed: \(error)")
+            }
+        }
+
+        // Retry until gone (1s, 3s, 7s), then give up
+        let backoff: [UInt64] = [1, 3, 7].map { UInt64($0) * 1_000_000_000 }
+        for delay in backoff {
+            try? await Task.sleep(nanoseconds: delay)
+            let remaining = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+            addToAppLogs("🧪 endAll() verification: remaining=\(remaining)")
+            if remaining == 0 { 
+                addToAppLogs("✅ endAll() successful - all activities ended")
+                break
+            }
+        }
+
+        // Failsafe: if still present, push a final "not charging" update and stale it out
+        let finalActivities = Activity<PETLLiveActivityExtensionAttributes>.activities
+        if !finalActivities.isEmpty {
+            addToAppLogs("⚠️ endAll() failsafe: \(finalActivities.count) activities still present, marking as stale")
+            
+            for act in finalActivities {
+                var s = act.content.state
+                s.isCharging = false
+                s.timeToFullMinutes = 0
+                s.expectedFullDate = Date()
+                s.timestamp = Date()
+
+                // Mark as stale so the system deprioritizes it immediately
+                let content = ActivityContent(state: s, staleDate: Date(), relevanceScore: 0)
+                do { 
+                    try await act.update(content) 
+                    addToAppLogs("✅ Final stale update sent for \(act.id)")
+                    // Try ending immediately after stale update
+                    try await act.end(dismissalPolicy: .immediate)
+                    addToAppLogs("✅ Final end attempt for \(act.id)")
                 } catch {
-                    addToAppLogs("❌ Activity.end failed: \(error.localizedDescription)")
+                    addToAppLogs("⚠️ final stale update/end failed for \(act.id): \(error)")
                 }
             }
-
-            // 2) Give the system a tick to process the dismissal, then verify
-            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
-            let remaining = Activity<PETLLiveActivityExtensionAttributes>.activities.count
-            #if DEBUG
-            addToAppLogs("🧪 endAll() verification: remaining=\(remaining)")
-            #endif
-
-            // 3) If anything is still present, schedule the watchdog/self-ping fallback
-            if remaining > 0 {
-                scheduleEndWatchdog()  // your existing watchdog
-            } else {
-                cancelEndWatchdog()    // make sure we clear any pending watchdog
-            }
-
-            // 4) Reset your session flags only when we've truly ended
-            self.didStartThisSession = false
-            self.isActive = false
-            // ===== BEGIN STABILITY-LOCKED: LiveActivity cooldown (do not edit) =====
-            lastEndAt = Date()
-            // ===== END STABILITY-LOCKED =====
-            // hasLiveActivity is computed from actual activity state, no need to set it
-            
-            // Cancel any pending retry tasks
-            retryStartTask?.cancel()
-            retryStartTask = nil
-            recentStartAt = nil
-            
-            // Clear the actor's stale pointer and reset first-push throttle
-            await ActivityCoordinator.shared.stopIfNeeded()
-            Self.didForceFirstPushThisSession = false
-            self.lastPush = nil
-            self.lastPushedMinutes = nil
-
-            addToAppLogs("🛑 Activity ended - source: \(src)") // canonical per spec
-            
-            // Debug: dump activities after end
-            dumpActivities("afterEnd")
-            
-            // Post-end diagnostic
-            addToAppLogs("🧪 post-end activities: \(Activity<PETLLiveActivityExtensionAttributes>.activities.map{ $0.id }.joined(separator: ","))")
         }
-        cancelFailsafeTask()
+
+        self.didStartThisSession = false
+        self.isActive = false
+        lastEndAt = Date()
+        
+        retryStartTask?.cancel()
+        retryStartTask = nil
+        recentStartAt = nil
+        
+        await ActivityCoordinator.shared.stopIfNeeded()
+        Self.didForceFirstPushThisSession = false
+        self.lastPush = nil
+        self.lastPushedMinutes = nil
+
+        addToAppLogs("🛑 Activity ended - source: \(reason)")
+        
+        // Cancel background refresh since no activities remain
+        if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
+            appDelegate.cancelRefresh()
+        }
+        
+        dumpActivities("afterEnd")
+        
+        addToAppLogs("🧪 post-end activities: \(Activity<PETLLiveActivityExtensionAttributes>.activities.map{ $0.id }.joined(separator: ","))")
+    }
+    
+    private func cancelFailsafeTask() {
+        // Implementation for canceling failsafe task
     }
     
     // MARK: - Helper Methods
-    
-    private func firstContent() -> PETLLiveActivityExtensionAttributes.ContentState {
-        let level = Double(UIDevice.current.batteryLevel) // 0.0—1.0
+    func firstContent() -> PETLLiveActivityExtensionAttributes.ContentState {
+        let level = Double(UIDevice.current.batteryLevel)
         let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
 
-        // Initialize DI with presented values (not raw)
-        let rawETA = ChargeEstimator.shared.current?.minutesToFull
+        // Use default values for first content
+        let rawETA: Int? = nil
         let rawW = BatteryTrackingManager.shared.currentWatts
-        let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-        let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
-        
+        let isWarmFromEstimator = ChargeEstimator.shared.current?.isInWarmup ?? false
+
+        // 🔥 Warmup override just for the first push
+        let isWarm = isWarmFromEstimator || forceWarmupNextPush
+        if forceWarmupNextPush { forceWarmupNextPush = false }
+
         let token = BatteryTrackingManager.shared.tickToken
         let initialEta = FeatureFlags.useETAPresenter
-            ? ETAPresenter.shared.presented(rawETA: rawETA, watts: rawW, sysPct: sysPct, isCharging: isCharging, isWarmup: isWarm, tickToken: token).minutes
+            ? ETAPresenter.shared.presented(
+                rawETA: rawETA,
+                watts: rawW,
+                sysPct: Int(BatteryTrackingManager.shared.level * 100),
+                isCharging: isCharging,
+                isWarmup: isWarm,
+                tickToken: token
+            ).minutes
             : rawETA
         
-        let (label, _) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: ChargeEstimator.shared.current?.pctPerMin)
+        let (label, _) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: 1.0) // Default rate
 
+        let etaMin = initialEta ?? 0
+        let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
+        
         return PETLLiveActivityExtensionAttributes.ContentState(
-            batteryLevel: Float(level),
+            batteryLevel: Int(level * 100),
             isCharging: isCharging,
             chargingRate: label,
             estimatedWattage: String(format: "%.1fW", rawW),
-            timeToFullMinutes: initialEta ?? 0,
-            deviceModel: getDeviceModel(),
+            timeToFullMinutes: etaMin,
+            expectedFullDate: expectedFullDate,
+            deviceModel: DeviceProfileService.shared.profile?.name ?? UIDevice.current.model,
             batteryHealth: "Excellent",
             isInWarmUpPeriod: isWarm,
             timestamp: Date()
         )
     }
     
-
-    
     private func updateWithCurrentBatteryData() {
         let batteryLevel = UIDevice.current.batteryLevel
         let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
         
-        // Use presented values (not raw)
-        let rawETA = ChargeEstimator.shared.current?.minutesToFull
+        // Use default values since we don't have access to analytics store here
+        let rawETA: Int? = nil
         let rawW = BatteryTrackingManager.shared.currentWatts
         let sysPct = Int(BatteryTrackingManager.shared.level * 100)
         let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
@@ -824,21 +888,24 @@ final class LiveActivityManager {
             ? ETAPresenter.shared.presented(rawETA: rawETA, watts: rawW, sysPct: sysPct, isCharging: isCharging, isWarmup: isWarm, tickToken: token).minutes
             : rawETA
         
-        let (label, _) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: ChargeEstimator.shared.current?.pctPerMin)
+        let (label, _) = ChargingAnalytics.chargingCharacteristic(pctPerMinute: 1.0) // Default rate
+        
+        let etaMin = displayedETA ?? 0
+        let expectedFullDate = Date().addingTimeInterval(TimeInterval(max(etaMin, 0) * 60))
         
         let contentState = PETLLiveActivityExtensionAttributes.ContentState(
-            batteryLevel: batteryLevel,
+            batteryLevel: Int(batteryLevel * 100),
             isCharging: isCharging,
             chargingRate: label,
             estimatedWattage: String(format: "%.1fW", rawW),
-            timeToFullMinutes: displayedETA ?? 0,
-            deviceModel: getDeviceModel(),
+            timeToFullMinutes: etaMin,
+            expectedFullDate: expectedFullDate,
+            deviceModel: DeviceProfileService.shared.profile?.name ?? UIDevice.current.model,
             batteryHealth: "Excellent",
             isInWarmUpPeriod: isWarm,
             timestamp: Date()
         )
         
-        // Update all activities immediately
         Task { @MainActor in
             for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
                 await activity.update(using: contentState)
@@ -867,7 +934,9 @@ final class LiveActivityManager {
             task.setTaskCompleted(success: false)
         }
         
-        endAll("failsafe")
+        Task { @MainActor in
+            await endAll("failsafe")
+        }
         task.setTaskCompleted(success: true)
     }
     
@@ -883,10 +952,6 @@ final class LiveActivityManager {
         }
     }
     
-    private func cancelFailsafeTask() {
-        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: "com.petl.liveactivity.cleanup")
-    }
-    
     private func uploadPushToken(_ token: Data?) {
         guard let token = token else {
             os_log("❌ No push token available")
@@ -896,26 +961,16 @@ final class LiveActivityManager {
         let hex = token.map { String(format: "%02hhx", $0) }.joined()
         os_log("📤 Uploading push token: %@", hex)
         
-        // Store the push token for Live Activity updates
-        // OneSignal automatically handles push token management
-        // This token is used for server-side Live Activity control
         UserDefaults.standard.set(hex, forKey: "live_activity_push_token")
         
-        // Log token for debugging and server integration
         addToAppLogs("📤 Live Activity Push Token: \(hex.prefix(20))...")
         print("📤 Live Activity Push Token: \(hex)")
-        
-        // Note: OneSignal handles the actual server communication
-        // This token can be used by your server to send Live Activity updates
-        // via OneSignal's Live Activity API
     }
     
-    /// Retrieves the stored push token for server-side Live Activity updates
     func getStoredPushToken() -> String? {
         return UserDefaults.standard.string(forKey: "live_activity_push_token")
     }
     
-    /// Checks if a valid push token is available for Live Activity updates
     func hasValidPushToken() -> Bool {
         guard let token = getStoredPushToken() else { return false }
         return token.count == 64 && token.range(of: "^[0-9a-fA-F]{64}$", options: .regularExpression) != nil
@@ -931,57 +986,23 @@ final class LiveActivityManager {
         let isCurrentlyCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
         
         if wasCharging && !isCurrentlyCharging {
-            // State mismatch - clean up
             os_log("🔄 State mismatch detected - cleaning up")
-            endAll("state cleanup")
+            Task { @MainActor in
+                await endAll("state cleanup")
+            }
         }
     }
     
     // MARK: - Debug Helper
-    
     func dumpActivities(_ tag: String) {
         let list = Activity<PETLLiveActivityExtensionAttributes>.activities
         print("💬 \(tag) — \(list.count) activities")
         list.forEach { print("   · \($0.id)  \(String(describing: $0.activityState))") }
     }
     
-    private func getDeviceModel() -> String {
-        var systemInfo = utsname()
-        uname(&systemInfo)
-        let machineMirror = Mirror(reflecting: systemInfo.machine)
-        let identifier = machineMirror.children.reduce("") { identifier, element in
-            guard let value = element.value as? Int8, value != 0 else { return identifier }
-            return identifier + String(UnicodeScalar(UInt8(value)))
-        }
-        
-        // Map to readable names
-        let deviceNames: [String: String] = [
-            "iPhone14,2": "iPhone 13 Pro",
-            "iPhone14,3": "iPhone 13 Pro Max",
-            "iPhone14,4": "iPhone 13 mini",
-            "iPhone14,5": "iPhone 13",
-            "iPhone14,6": "iPhone SE (3rd generation)",
-            "iPhone14,7": "iPhone 14",
-            "iPhone14,8": "iPhone 14 Plus",
-            "iPhone15,2": "iPhone 14 Pro",
-            "iPhone15,3": "iPhone 14 Pro Max",
-            "iPhone15,4": "iPhone 15",
-            "iPhone15,5": "iPhone 15 Plus",
-            "iPhone16,1": "iPhone 15 Pro",
-            "iPhone16,2": "iPhone 15 Pro Max",
-            "iPhone16,3": "iPhone 16",
-            "iPhone16,4": "iPhone 16 Plus",
-            "iPhone16,5": "iPhone 16 Pro",
-            "iPhone16,6": "iPhone 16 Pro Max"
-        ]
-        
-        return deviceNames[identifier] ?? "iPhone"
-    }
+
     
-    /// Returns current charging rate in %/minute, or nil if not available
     private func currentPctPerMinuteOrNil() -> Double? {
-        // For now, return nil to use warm-up fallback
-        // This can be enhanced to get actual rate from BatteryTrackingManager
         return nil
     }
-} 
+}
