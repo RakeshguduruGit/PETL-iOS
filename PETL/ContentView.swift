@@ -1608,6 +1608,20 @@ struct InfoNavigationContent: View {
                 }
                 .buttonStyle(.bordered)
                 
+                Button("Force Start Live Activity") {
+                    Task { @MainActor in
+                        await LiveActivityManager.shared.startActivity(reason: .debug)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                
+                Button("End All Live Activities") {
+                    Task { @MainActor in
+                        await LiveActivityManager.shared.endAll("DEBUG-END-ALL")
+                    }
+                }
+                .buttonStyle(.bordered)
+                
                 // Status display
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Status:")
@@ -1676,6 +1690,23 @@ struct OneSignalStatusView: View {
 }
 
 #if DEBUG
+struct DebugControls: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Button("Force Start Live Activity") {
+                Task { @MainActor in
+                    await LiveActivityManager.shared.startActivity(reason: .debug)
+                }
+            }
+            Button("End All Live Activities") {
+                Task { @MainActor in
+                    await LiveActivityManager.shared.endAll("DEBUG-END-ALL")
+                }
+            }
+        }.padding(.vertical, 8)
+    }
+}
+
 struct LogViewerView: View {
     @Binding var logMessages: [String]
     @Binding var showLogs: Bool
