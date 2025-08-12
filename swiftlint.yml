@@ -61,6 +61,26 @@ custom_rules:
     severity: warning
     message: "Stability-locked code should be fenced with BEGIN/END STABILITY-LOCKED comments"
 
+  ban_seeded_start_outside_manager:
+    included: "PETL/.*\\.swift"
+    excluded: "PETL/LiveActivityManager.swift"
+    name: "Use wrapper start"
+    regex: "startActivity\\(seed:"
+    message: "Call startActivity(reason:) wrapper only."
+    severity: error
+
+  ban_local_unplug_endall:
+    name: "No direct endAll(local unplug)"
+    regex: "endAll\\([^)]*local unplug"
+    message: "Unplug must end via endActive(...)."
+    severity: error
+
+  require_critical_starter_log:
+    name: "🎬 must use addToAppLogsCritical"
+    regex: "Started Live Activity id=.*(Logger\\.|laLogger)"
+    message: "Use addToAppLogsCritical for 🎬 logs."
+    severity: error
+
 # General code quality rules
 line_length:
   warning: 120

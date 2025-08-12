@@ -1,0 +1,12 @@
+# Contributing
+
+## Live Activity Guardrails (non-negotiable)
+- All starts must call `LiveActivityManager.startActivity(reason:)` (wrapper).
+- Seeded start is **private**; never call it directly.
+- Exactly one `Activity.request` in app target.
+- Debounced unplug ends **by ID** via `endActive(...)`. Never call `endAll("local unplug")`.
+- Foreground gate must be used. If not active → defer start.
+- `🎬 Started …` logs use `addToAppLogsCritical` (push + no-push).
+- See `docs/RELEASE_QA.md` before merging.
+
+CI will block merges if these are violated (see `scripts/qa_gate.sh`).

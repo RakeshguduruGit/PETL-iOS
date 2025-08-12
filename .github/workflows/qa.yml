@@ -1,0 +1,23 @@
+name: QA Gate
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+jobs:
+  qa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: QA Script
+        run: scripts/qa_gate.sh
+
+      - name: Build (sanity)
+        run: |
+          xcodebuild -project PETL.xcodeproj -scheme PETL -destination 'platform=iOS Simulator,name=iPhone 16' -quiet build
+
+      # Optional SwiftLint (if you use it)
+      - name: Install SwiftLint
+        run: brew install swiftlint || true
+      - name: SwiftLint (optional)
+        run: swiftlint || true
