@@ -18,15 +18,21 @@ A comprehensive QA gate system has been implemented to ensure the Live Activity 
 - **Expected outcomes**: Specific log messages and behaviors
 
 ### 2. QA Gate Script (`scripts/qa_gate.sh`)
-Enforces 8 critical rules:
+Enforces 8 critical rules with improved robustness:
 1. ✅ Exactly 2 `Activity.request` calls in LiveActivityManager.swift (push + fallback)
+   - Type-agnostic regex: `Activity<...PETL...Attributes...>.request`
+   - Validates one push (`pushType:.token`) and one no-push request
 2. ✅ No direct `startActivity(seed:)` outside `LiveActivityManager`
+   - Excludes documentation and backup files
 3. ✅ No `endAll("local unplug")` calls
 4. ✅ 🎬 logs use `addToAppLogsCritical` (exactly 2 emitters)
+   - Only inspects LiveActivityManager.swift (no false positives)
 5. ✅ Wrapper `startActivity(reason:)` is public
 6. ✅ Seeded `startActivity(seed:)` is private
+   - Precise regex: `private func startActivity(seed seededMinutes:`
 7. ✅ Foreground gate present in wrapper
-8. ✅ Debounce calls `endActive("UNPLUG...")`
+8. ✅ Debounce calls `endActive("UNPLUG...")` with cancelable sleep
+   - Enforces `Task.sleep` for proper cancellation
 9. ⚠️ Thrash guard warning (optional)
 
 ### 3. GitHub Actions CI (`github/workflows/qa.yml`)
@@ -75,15 +81,16 @@ Enforces 8 critical rules:
 ## Testing Results
 
 ### QA Gate Script
-✅ **All 8 checks pass**:
+✅ **All 8 checks pass with improved robustness**:
 - 2 Activity.request calls found in LiveActivityManager.swift (push + fallback)
-- No direct seeded starts outside manager
+  - Type-agnostic detection with push/no-push validation
+- No direct seeded starts outside manager (excludes docs/backups)
 - No forbidden endAll calls
-- 2 🎬 emitters using addToAppLogsCritical
+- 2 🎬 emitters using addToAppLogsCritical (no false positives)
 - Wrapper function is public
-- Seeded function is private
+- Seeded function is private (precise signature matching)
 - Foreground gate present
-- Debounce calls endActive correctly
+- Debounce calls endActive correctly with cancelable sleep
 
 ### Build Status
 ✅ **Build successful** - All changes compile without errors
@@ -97,17 +104,24 @@ Enforces 8 critical rules:
 - `.githooks/pre-push` - Local safety hook
 - `swiftlint.yml` - Custom linting rules
 
-## Commit
-- **Hash**: `44c8680`
-- **Message**: "Add Live Activity QA gate: docs + script + CI + PR template + hooks"
+## Commits
+- **Hash**: `44c8680` - "Add Live Activity QA gate: docs + script + CI + PR template + hooks"
+- **Hash**: `057f81a` - "QA gate: improved robustness with type-agnostic regex and precise checks"
 
 ## Status
-✅ **QA Gate System Complete** - Live Activity contract is now protected by:
+✅ **QA Gate System Complete & Robust** - Live Activity contract is now protected by:
 - Human verification checklist
-- Automated script enforcement
+- Automated script enforcement with improved robustness
 - CI/CD blocking on violations
 - PR template requirements
 - Local pre-push hooks
 - SwiftLint custom rules
+
+### Key Improvements
+- **Type-agnostic detection**: Works with any PETL Attributes type
+- **Zero false positives**: Only inspects source files, excludes docs/backups
+- **Precise validation**: Exact function signatures and push/no-push paths
+- **Cancel-safe debounce**: Enforces proper Task.sleep usage
+- **Better error handling**: Enhanced reporting with line numbers
 
 The system ensures that future changes cannot violate the established Live Activity contract, maintaining the stability and reliability of the implementation.
