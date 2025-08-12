@@ -159,6 +159,7 @@ final class LiveActivityManager {
     
     // MARK: - Activity ID Tracking
     private var currentActivityID: String? // authoritative pointer
+    @MainActor private var isEnding = false
     
     // MARK: - Activity Registration
     private func register(_ activity: Activity<PETLLiveActivityExtensionAttributes>, reason: String) {
@@ -229,12 +230,17 @@ final class LiveActivityManager {
         if isActive && !hasLiveActivity { isActive = false }
         if hasLiveActivity { isActive = true }
         
-        // Startup recovery: if there's any system activity but currentActivityID == nil, call endAll
-        let systemActivities = Activity<PETLLiveActivityExtensionAttributes>.activities
-        if !systemActivities.isEmpty && currentActivityID == nil {
-            addToAppLogs("🔄 Startup recovery: \(systemActivities.count) system activities but no tracked ID")
-            Task { @MainActor in
-                await endAll("STARTUP-RECOVERY")
+        // Reattach to existing activity if charging, otherwise cleanup
+        if BatteryTrackingManager.shared.isCharging {
+            reattachIfNeeded()
+        } else {
+            // Startup recovery: if there's any system activity but currentActivityID == nil, call endAll
+            let systemActivities = Activity<PETLLiveActivityExtensionAttributes>.activities
+            if !systemActivities.isEmpty && currentActivityID == nil {
+                addToAppLogs("🔄 Startup recovery: \(systemActivities.count) system activities but no tracked ID")
+                Task { @MainActor in
+                    await endAll("STARTUP-RECOVERY")
+                }
             }
         }
         
@@ -245,6 +251,16 @@ final class LiveActivityManager {
             lastFGSummaryAt = now
         }
         ensureStartedIfChargingNow()
+    }
+    
+    @MainActor
+    func reattachIfNeeded() {
+        guard currentActivityID == nil else { return }
+        // if exactly one PETL activity exists, adopt it; if many, pick the most recent
+        if let a = Activity<PETLLiveActivityExtensionAttributes>.activities.last {
+            currentActivityID = a.id
+            BatteryTrackingManager.shared.addToAppLogsCritical("🧷 Reattached active id=\(String(a.id.suffix(4))) on launch")
+        }
     }
     
     @MainActor
@@ -865,24 +881,27 @@ func startActivity(reason: LAStartReason) async {
     
     @MainActor
     func endActive(_ reason: String) async {
+        if isEnding {
+            BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip end — already ending")
+            return
+        }
+        isEnding = true
+        defer { isEnding = false }
+
         if let id = currentActivityID,
            let a = Activity<PETLLiveActivityExtensionAttributes>.activities.first(where: { $0.id == id }) {
-            addToAppLogs("🧪 endActive(\(reason)) id=\(String(id.suffix(4)))")
+            BatteryTrackingManager.shared.addToAppLogsCritical("🧪 endActive(\(reason)) id=\(String(id.suffix(4)))")
             do {
-                try await a.end(dismissalPolicy: .immediate)
-                addToAppLogs("✅ end done id=\(String(id.suffix(4)))")
+                try await a.end(nil, dismissalPolicy: .immediate)
+                BatteryTrackingManager.shared.addToAppLogsCritical("✅ end done id=\(String(id.suffix(4)))")
             } catch {
-                addToAppLogs("❌ end failed id=\(String(id.suffix(4))): \(error.localizedDescription)")
+                BatteryTrackingManager.shared.addToAppLogsCritical("❌ end failed id=\(String(id.suffix(4))): \(error.localizedDescription)")
             }
-            // Whether success or not, drop the pointer if it no longer exists:
-            let stillThere = Activity<PETLLiveActivityExtensionAttributes>.activities.contains(where: { $0.id == id })
-            if !stillThere { 
-                currentActivityID = nil 
-                addToAppLogs("🧹 cleared currentActivityID (no longer exists)")
+            // clear pointer if gone
+            if Activity<PETLLiveActivityExtensionAttributes>.activities.first(where: { $0.id == id }) == nil {
+                currentActivityID = nil
             }
         } else {
-            // No tracked ID? Fall back to a sweep.
-            addToAppLogs("🔄 endActive(\(reason)) - no tracked ID, falling back to endAll")
             await endAll("FALLBACK-\(reason)")
         }
     }
