@@ -19,7 +19,7 @@ A comprehensive QA gate system has been implemented to ensure the Live Activity 
 
 ### 2. QA Gate Script (`scripts/qa_gate.sh`)
 Enforces 8 critical rules:
-1. ✅ Exactly 2 `Activity.request` calls (push + no-push fallback)
+1. ✅ Exactly 2 `Activity.request` calls in LiveActivityManager.swift (push + fallback)
 2. ✅ No direct `startActivity(seed:)` outside `LiveActivityManager`
 3. ✅ No `endAll("local unplug")` calls
 4. ✅ 🎬 logs use `addToAppLogsCritical` (exactly 2 emitters)
@@ -76,7 +76,7 @@ Enforces 8 critical rules:
 
 ### QA Gate Script
 ✅ **All 8 checks pass**:
-- 2 Activity.request calls found (push + no-push)
+- 2 Activity.request calls found in LiveActivityManager.swift (push + fallback)
 - No direct seeded starts outside manager
 - No forbidden endAll calls
 - 2 🎬 emitters using addToAppLogsCritical

@@ -3,6 +3,7 @@
 ## Pass criteria
 - Every allowed start prints `🎬 Started …` and `✅ post-request system count=1 tracked=…`.
 - No duplicate activities (count never > 1).
+- Exactly 2 `Activity.request` calls in LiveActivityManager.swift (push + fallback).
 - Unplug > debounce ends **by ID** via `endActive(...)`. No `endAll("local unplug")`.
 - No "Target is not foreground" on start (deferral is used).
 - No ETA dash/0m while charging.

@@ -4,9 +4,9 @@ set -euo pipefail
 fail() { echo "❌ $1" >&2; exit 1; }
 pass() { echo "✅ $1"; }
 
-# 1) Exactly two Activity.request in LiveActivityManager (push + no-push fallback)
-REQ_COUNT=$(git grep -n "Activity<.*PETLLiveActivityExtensionAttributes.*>.request" PETL/LiveActivityManager.swift | wc -l | xargs)
-[[ "$REQ_COUNT" == "2" ]] || fail "Expected exactly 2 Activity.request in LiveActivityManager (push + no-push), found $REQ_COUNT."
+# 1) Exactly two Activity.request calls in LiveActivityManager.swift (push + fallback)
+REQ_COUNT=$(git grep -n 'Activity<.*PETLLiveActivityExtensionAttributes.*>.request' PETL/LiveActivityManager.swift | wc -l | xargs)
+[[ "$REQ_COUNT" == "2" ]] || fail "Expected exactly 2 Activity.request calls (push + fallback), found $REQ_COUNT."
 
 # 2) No direct seeded starts outside LiveActivityManager
 BAD_SEEDED=$(git grep -n "startActivity(seed:" -- :^PETLLiveActivityExtension* -- ':(exclude)*.md' | grep -v "LiveActivityManager.swift" || true)

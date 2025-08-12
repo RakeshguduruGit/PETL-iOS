@@ -1,6 +1,6 @@
 ### Live Activity QA (must check all)
 - [ ] Build passes on iOS 17+
-- [ ] Exactly one `Activity.request` in app target
+- [ ] Exactly two `Activity.request` calls in LiveActivityManager.swift (push + fallback)
 - [ ] No `startActivity(seed:)` outside `LiveActivityManager`
 - [ ] 🎬 logs via `addToAppLogsCritical` (push & no-push)
 - [ ] Unplug ends via `endActive(...)` (no `endAll("local unplug")`)
