@@ -643,14 +643,6 @@ final class LiveActivityManager {
     }
     
     // MARK: - Unified Start
-    // MARK: - Reasons (uniform)
-    enum LAStartReason: String {
-        case launch = "LAUNCH-CHARGING"
-        case chargeBegin = "CHARGE-BEGIN"
-        case replugAfterCooldown = "REPLUG-AFTER-COOLDOWN"
-        case snapshot = "BATTERY-SNAPSHOT"
-        case debug = "DEBUG"
-    }
 
     @MainActor
     private func startActivity(seed seededMinutes: Int, sysPct: Int, reason: LAStartReason) {
@@ -694,7 +686,17 @@ final class LiveActivityManager {
             register(activity, reason: reason.rawValue)
             observePushToken(activity) // safe logger capture below
         } catch {
-            BatteryTrackingManager.shared.addToAppLogsCritical("⚠️ Push start failed (\(error.localizedDescription)) — falling back to no-push")
+            // If the only problem is foreground, defer instead of fallback
+            let nsErr = error as NSError
+            if nsErr.localizedDescription.localizedCaseInsensitiveContains("foreground") {
+                BatteryTrackingManager.shared.addToAppLogsCritical("🕒 Deferring start — app not foreground (reason=\(reason.rawValue))")
+                AppForegroundGate.shared.runWhenActive(reason: reason) { [weak self] in
+                    Task { @MainActor in await self?.startActivity(reason: reason) }
+                }
+                return
+            }
+
+            BatteryTrackingManager.shared.addToAppLogsCritical("⚠️ Push start failed (\(nsErr.localizedDescription)) — falling back to no-push")
             do {
                 let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(attributes: attrs, content: content)
                 BatteryTrackingManager.shared.addToAppLogsCritical("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=off)")
@@ -742,24 +744,36 @@ func startActivity(reason: LAStartReason) async {
     // 2) Cooldown (keep your stability lock)
     if let ended = lastEndAt, Date().timeIntervalSince(ended) < minRestartInterval {
         let remain = Int(minRestartInterval - Date().timeIntervalSince(ended))
-        addToAppLogs("⏭️ Skip start — COOLDOWN (\(remain)s left)")
+        BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — COOLDOWN (\(remain)s left)")
         return
     }
 
     // 3) If the system already has an activity, mark active and bail
     if hasLiveActivity {
-        addToAppLogs("⏭️ Skip start — ALREADY-ACTIVE")
+        BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — ALREADY-ACTIVE")
         return
     }
 
     // 4) Hard guard on fresh battery state
     let st = UIDevice.current.batteryState
     guard st == .charging || st == .full else {
-        addToAppLogs("⏭️ Skip start — NOT-CHARGING")
+        BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — NOT-CHARGING")
         return
     }
 
-    // 5) Call the unified start method
+    // 5) Foreground gate
+    if AppForegroundGate.shared.isActive == false {
+        BatteryTrackingManager.shared.addToAppLogsCritical("⏭️ Skip start — NOT-FOREGROUND (deferring \(reason.rawValue))")
+        AppForegroundGate.shared.runWhenActive(reason: reason) { [weak self] in
+            Task { @MainActor in
+                // recheck minimal thrash guard if you want
+                await self?.startActivity(reason: reason)
+            }
+        }
+        return
+    }
+
+    // 6) Call the unified start method
     let sysPct = Int(BatteryTrackingManager.shared.level * 100)
     let seed = ETAPresenter.shared.lastStableMinutes
            ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
