@@ -881,7 +881,6 @@ func startActivity(reason: LAStartReason) async {
                 s.isCharging = false
                 s.timeToFullMinutes = 0
                 s.expectedFullDate = Date()
-                s.timestamp = Date()
 
                 // Mark as stale so the system deprioritizes it immediately
                 let content = ActivityContent(state: s, staleDate: Date(), relevanceScore: 0)

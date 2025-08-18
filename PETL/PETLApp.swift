@@ -160,9 +160,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         print("✅ OneSignal initialized successfully")
         appLogger.info("✅ OneSignal initialized successfully")
         
-        // Setup OneSignal Live Activity
-        // TODO: Re-enable OneSignal integration when conformance is properly implemented
-        // #if canImport(OneSignalFramework) || canImport(OneSignal)
+        // Setup OneSignal Live Activity bridge (TEMP DISABLED)
+        // #if canImport(OneSignalLiveActivities) || canImport(OneSignalFramework) || canImport(OneSignal)
         // OneSignal.LiveActivities.setup(PETLLiveActivityAttributes.self)
         // #endif
         
@@ -458,7 +457,7 @@ fileprivate func startLiveActivityTokenWatcher() {
                 for await tokenData in activity.pushTokenUpdates {
                     let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()
                     print("🔑 LiveActivity APNs token=\(tokenHex)")
-                    #if canImport(OneSignalFramework)
+                    #if false // TEMP DISABLED to unblock build
                     OneSignal.LiveActivities.enter(activity.id, withToken: tokenHex) { _ in
                         print("📡 OneSignal enter OK id=\(activity.id.prefix(6))")
                     } withFailure: { error in
@@ -470,7 +469,7 @@ fileprivate func startLiveActivityTokenWatcher() {
             Task.detached(priority: TaskPriority.background) {
                 for await state in activity.activityStateUpdates {
                     if case .ended = state {
-                        #if canImport(OneSignalFramework)
+                        #if false // TEMP DISABLED to unblock build
                         OneSignal.LiveActivities.exit(activity.id) { _ in
                             print("📡 OneSignal exit OK id=\(activity.id.prefix(6))")
                         } withFailure: { error in
@@ -487,7 +486,7 @@ fileprivate func startLiveActivityTokenWatcher() {
                 for await tokenData in activity.pushTokenUpdates {
                     let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()
                     print("🔑 LiveActivity APNs token=\(tokenHex)")
-                    #if canImport(OneSignalFramework)
+                    #if false // TEMP DISABLED to unblock build
                     OneSignal.LiveActivities.enter(activity.id, withToken: tokenHex) { _ in
                         print("📡 OneSignal enter OK id=\(activity.id.prefix(6))")
                     } withFailure: { error in
@@ -499,7 +498,7 @@ fileprivate func startLiveActivityTokenWatcher() {
             Task.detached(priority: TaskPriority.background) {
                 for await state in activity.activityStateUpdates {
                     if case .ended = state {
-                        #if canImport(OneSignalFramework)
+                        #if false // TEMP DISABLED to unblock build
                         OneSignal.LiveActivities.exit(activity.id) { _ in
                             print("📡 OneSignal exit OK id=\(activity.id.prefix(6))")
                         } withFailure: { error in

@@ -103,10 +103,9 @@ final class OneSignalClient {
                 "estimatedWattage": state.estimatedWattage,
                 "timeToFullMinutes": state.timeToFullMinutes,
                 "expectedFullDate": Int(state.expectedFullDate.timeIntervalSince1970),
-                "deviceModel": state.deviceModel,
-                "batteryHealth": state.batteryHealth,
-                "isInWarmUpPeriod": state.isInWarmUpPeriod,
-                "timestamp": Int(state.timestamp.timeIntervalSince1970)
+                "soc": state.soc,
+                "watts": state.watts,
+                "updatedAt": Int(state.updatedAt.timeIntervalSince1970)
             ]
             // do NOT include "contents"/"headings" to avoid user alerts
         ]

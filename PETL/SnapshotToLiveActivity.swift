@@ -52,11 +52,7 @@ struct SnapshotToLiveActivity {
             expectedFullDate: expectedFullDate,
             chargingRate: chargingRate,
             batteryLevel: snapshot.socPercent,
-            estimatedWattage: estimatedWattage,
-            deviceModel: snapshot.device.modelIdentifier,
-            batteryHealth: "Good", // TODO: Add battery health tracking
-            isInWarmUpPeriod: isInWarmUpPeriod,
-            timestamp: snapshot.ts
+            estimatedWattage: estimatedWattage
         )
     }
     
