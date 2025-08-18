@@ -573,15 +573,15 @@ final class ChargingSessionManager {
 
     @MainActor
     private func evaluate(initial: Bool) {
-        let isCharging = BatteryTrackingManager.shared.isCharging
-        switch BatteryTrackingManager.shared.chargeState {
+        let isCharging = ChargeStateStore.shared.isCharging
+        switch ChargeStateStore.shared.currentState {
         case .charging, .full:
             if state == .idle || state == .ended {
                 transition(to: .probing)
                 probeTimer?.invalidate()
                 probeTimer = Timer.scheduledTimer(withTimeInterval: hysteresisSeconds, repeats: false) { [weak self] _ in
                     guard let self else { return }
-                    if BatteryTrackingManager.shared.isCharging {
+                    if ChargeStateStore.shared.isCharging {
                         self.transition(to: .active)
                         NotificationCenter.default.post(name: .petlSessionStarted, object: nil)
                     } else {
@@ -671,7 +671,7 @@ final class PETLOrchestrator {
         }
         
         // Measure: read battery level if available
-        let measuredSoc = BatteryTrackingManager.shared.currentBatteryLevel
+        let measuredSoc = ChargeStateStore.shared.currentBatteryLevel
         
         // Simulate: watts via SoC band + thermal factor (simplified)
         let simWatts = simulateWatts(soc: measuredSoc)
