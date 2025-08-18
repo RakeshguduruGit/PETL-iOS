@@ -218,6 +218,21 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             PETLOrchestrator.shared.validateConfiguration()
         }
         
+        // Wire orchestrator DB sinks to real ChargeDB APIs
+        PETLOrchestrator.shared.dbSinks.insertSoc = { pct, ts in
+            _ = ChargeDB.shared.insertSimulatedSoc(percent: pct, at: ts, quality: "simulated")
+            addToAppLogs("🪵 DB.soc ← \(pct)% @\(ts) [simulated]")
+        }
+        PETLOrchestrator.shared.dbSinks.insertPower = { watts, ts in
+            _ = ChargeDB.shared.insertSimulatedPower(watts: watts, at: ts, trickle: watts < 10.0, quality: "simulated")
+            addToAppLogs(String(format: "🪵 DB.power ← %.1fW @%@ [simulated]", watts, ts as CVarArg))
+        }
+        PETLOrchestrator.shared.dbSinks.recomputeAnalytics = {
+            // Note: ChargingAnalyticsStore doesn't have a public recompute method
+            // The analytics are computed automatically via ChargeEstimator.estimateSubject
+            addToAppLogs("🧮 DB.analytics.recompute(10m) requested")
+        }
+        
         return true
     }
     
@@ -622,6 +637,7 @@ final class PETLOrchestrator {
     // Simulation state & reliability gate
     private var socSim: Double = 0.0
     private var reliabilityCandidate: (value: Int, count: Int, firstSeen: Date)?
+    private var hasInitializedFromMeasured = false
     
     // State
     private var foregroundTimer: DispatchSourceTimer?
@@ -638,7 +654,12 @@ final class PETLOrchestrator {
     @MainActor
     func startForegroundLoop() {
         guard foregroundTimer == nil else { return }
-        
+        // Seed from current measured level to avoid flashing 0 in UI
+        let seed = ChargeStateStore.shared.currentBatteryLevel
+        if seed > 0 {
+            socSim = Double(seed)
+            hasInitializedFromMeasured = true
+        }
         foregroundTimer = DispatchSource.makeTimerSource(queue: .main)
         foregroundTimer?.schedule(deadline: .now(), repeating: foregoundTickSeconds)
         foregroundTimer?.setEventHandler { [weak self] in
@@ -659,6 +680,13 @@ final class PETLOrchestrator {
     
     @MainActor
     func backgroundRefreshTick(reason: String) async {
+        if !hasInitializedFromMeasured {
+            let seed = ChargeStateStore.shared.currentBatteryLevel
+            if seed > 0 {
+                socSim = Double(seed)
+                hasInitializedFromMeasured = true
+            }
+        }
         await tick(kind: .bg, reason: reason)
     }
     
@@ -679,8 +707,16 @@ final class PETLOrchestrator {
         let isCharging = ChargeStateStore.shared.isCharging
         var measuredSoc = ChargeStateStore.shared.currentBatteryLevel
         measuredSoc = max(0, min(100, measuredSoc))
-        // Initialize socSim on first tick on the main actor
-        if socSim == 0.0 { socSim = Double(measuredSoc) }
+        // Initialize from measured once; avoid flashing 0 if iOS hasn't reported yet
+        if !hasInitializedFromMeasured {
+            if measuredSoc > 0 {
+                socSim = Double(measuredSoc)
+                hasInitializedFromMeasured = true
+            } else {
+                addToAppLogs("⏳ Skipping tick publish — waiting for first non-zero measured SOC")
+                return
+            }
+        }
 
         // 2) Reliability gate — accept 5% steps only after 2 confirmations spaced apart
         var usedMeasured = false
@@ -691,6 +727,8 @@ final class PETLOrchestrator {
             socSim += correction
             usedMeasured = true
         }
+
+        let quality = usedMeasured ? "measured" : "simulated"
 
         // 3) Simulate power and integrate SoC between measurements
         let watts = estimatedWatts(for: Int(round(socSim)), isCharging: isCharging)
@@ -731,21 +769,49 @@ final class PETLOrchestrator {
         for activity in Activity<PETLLiveActivityAttributes>.activities {
             await activity.update(using: contentState)
         }
+        // Also route a lightweight payload for consumers that look at payload keys (idempotent)
+        await LiveActivityManager.shared.handleRemotePayload([
+            "simSoc": Int(round(socSim)),
+            "simWatts": watts,
+            "trickle": trickle,
+            "quality": quality,
+            "reason": reason
+        ])
 
         NotificationCenter.default.post(name: .petlOrchestratorTick, object: nil, userInfo: [
             "soc": Int(round(socSim)),
             "watts": watts,
             "trickle": trickle,
             "kind": (kind == .fg ? "fg" : "bg"),
-            "etaMin": Int(etaMinutes.rounded())
+            "etaMin": Int(etaMinutes.rounded()),
+            "quality": quality,
+            "etaSource": "sim",
+            "ts": now
         ])
 
-        addToAppLogs("🧮 \(kind == .fg ? "FG" : "BG") tick — soc=\(Int(round(socSim)))% watts=\(String(format: "%.1f", watts))\(trickle ? " (trickle)" : "") ETA=\(Int(etaMinutes.rounded()))m")
+        // Post specific simulated sample notifications for DB consumers
+        NotificationCenter.default.post(name: .petlSimulatedSocSample, object: nil, userInfo: [
+            "soc": Int(round(socSim)),
+            "quality": quality,
+            "ts": now
+        ])
+        
+        NotificationCenter.default.post(name: .petlSimulatedPowerSample, object: nil, userInfo: [
+            "watts": watts,
+            "trickle": trickle,
+            "quality": quality,
+            "ts": now
+        ])
+
+        addToAppLogs("🧮 \(kind == .fg ? "FG" : "BG") tick — soc=\(Int(round(socSim)))% watts=\(String(format: "%.1f", watts))\(trickle ? " (trickle)" : "") ETA=\(Int(etaMinutes.rounded()))m [\(quality)] {src=sim}")
+        addToAppLogs("📤 LiveActivity update requested — soc=\(Int(round(socSim))) watts=\(String(format: "%.1f", watts)) kind=\(kind == .fg ? "fg" : "bg")")
 
         // 6) Optional DB sinks
-        dbSinks.insertSoc?(Int(round(socSim)), now)
-        dbSinks.insertPower?(watts, now)
-        dbSinks.recomputeAnalytics?()
+        if hasInitializedFromMeasured {
+            dbSinks.insertSoc?(Int(round(socSim)), now)
+            dbSinks.insertPower?(watts, now)
+            dbSinks.recomputeAnalytics?()
+        }
     }
 
     // Accept a new 5% boundary only after 2 confirmations spaced in time
@@ -804,4 +870,6 @@ extension Notification.Name {
     static let petlSessionStarted = Notification.Name("petl.session.started")
     static let petlSessionEnded   = Notification.Name("petl.session.ended")
     static let petlOrchestratorTick = Notification.Name("petl.orchestrator.tick")
+    static let petlSimulatedSocSample = Notification.Name("petl.simulated.soc.sample")
+    static let petlSimulatedPowerSample = Notification.Name("petl.simulated.power.sample")
 }
