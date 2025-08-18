@@ -161,13 +161,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         appLogger.info("✅ OneSignal initialized successfully")
         
         // Setup OneSignal Live Activity
-        #if canImport(OneSignalLiveActivities)
-        #if canImport(OneSignalFramework)
-        OneSignal.LiveActivities.setup(PETLLiveActivityAttributes.self)
-        #elseif canImport(OneSignal)
-        OneSignal.LiveActivities.setup(PETLLiveActivityAttributes.self)
-        #endif
-        #endif
+        // TODO: Re-enable OneSignal integration when conformance is properly implemented
+        // #if canImport(OneSignalFramework) || canImport(OneSignal)
+        // OneSignal.LiveActivities.setup(PETLLiveActivityAttributes.self)
+        // #endif
         
         // Configure LiveActivityManager (single source of truth)
         LiveActivityManager.shared.configure()

@@ -72,7 +72,7 @@ actor ActivityCoordinator {
             
             let initialState = await LiveActivityManager.shared.firstContent()
             current = try await Activity.request(
-                attributes: PETLLiveActivityAttributes(name: "PETL Charging Activity"),
+                attributes: PETLLiveActivityAttributes(),
                 content: ActivityContent(state: initialState, staleDate: Date().addingTimeInterval(3600)),
                 pushType: .token
             )
@@ -104,7 +104,7 @@ actor ActivityCoordinator {
             do {
                 let fallbackState = await LiveActivityManager.shared.firstContent()
                 current = try await Activity.request(
-                    attributes: PETLLiveActivityAttributes(name: "PETL Charging Activity"),
+                    attributes: PETLLiveActivityAttributes(),
                     content: ActivityContent(state: fallbackState, staleDate: Date().addingTimeInterval(3600)),
                     pushType: nil
                 )
@@ -611,7 +611,7 @@ final class LiveActivityManager {
         let minutes = max(seededMinutes, ChargeStateStore.shared.currentETAMinutes ?? 0)
         addToAppLogs("⛽️ seed-\(minutes) sysPct=\(sysPct)")
 
-        let attrs = PETLLiveActivityAttributes(name: "PETL Charging Activity")
+        let attrs = PETLLiveActivityAttributes()
         // Use SSOT mapper to build content state
         let snapshot = ChargingSnapshot(
             ts: Date(),

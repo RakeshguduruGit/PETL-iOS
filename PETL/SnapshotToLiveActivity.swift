@@ -44,12 +44,15 @@ struct SnapshotToLiveActivity {
         let expectedFullDate = snappedNow.addingTimeInterval(TimeInterval(safeETAMinutes * 60))
         
         return PETLLiveActivityAttributes.ContentState(
-            batteryLevel: snapshot.socPercent,
+            soc: snapshot.socPercent,
+            watts: snapshot.watts ?? 0.0,
+            updatedAt: snapshot.ts,
             isCharging: snapshot.state == .charging,
-            chargingRate: chargingRate,
-            estimatedWattage: estimatedWattage,
             timeToFullMinutes: safeETAMinutes,
             expectedFullDate: expectedFullDate,
+            chargingRate: chargingRate,
+            batteryLevel: snapshot.socPercent,
+            estimatedWattage: estimatedWattage,
             deviceModel: snapshot.device.modelIdentifier,
             batteryHealth: "Good", // TODO: Add battery health tracking
             isInWarmUpPeriod: isInWarmUpPeriod,
