@@ -8,88 +8,8 @@
 import ActivityKit
 import WidgetKit
 import SwiftUI
-import ActivityKit
 
-// Temporary: Include the shared attributes definition here until target membership is fixed
-public struct PETLLiveActivityExtensionAttributes: ActivityAttributes {
-    public struct ContentState: Codable, Hashable {
-        public var batteryLevel: Int
-        public var isCharging: Bool
-        public var chargingRate: String
-        public var estimatedWattage: String
-        public var timeToFullMinutes: Int
-        public var expectedFullDate: Date
-        public var deviceModel: String
-        public var batteryHealth: String
-        public var isInWarmUpPeriod: Bool
-
-        // Canonical field name
-        public var timestamp: Date
-
-        // Back-compat decoder so older pushes with `computedAt` won't crash
-        enum CodingKeys: String, CodingKey {
-            case batteryLevel, isCharging, chargingRate, estimatedWattage,
-                 timeToFullMinutes, expectedFullDate, deviceModel, batteryHealth,
-                 isInWarmUpPeriod, timestamp, computedAt
-        }
-
-        public init(
-            batteryLevel: Int, isCharging: Bool, chargingRate: String,
-            estimatedWattage: String, timeToFullMinutes: Int, expectedFullDate: Date,
-            deviceModel: String, batteryHealth: String, isInWarmUpPeriod: Bool,
-            timestamp: Date
-        ) {
-            self.batteryLevel = batteryLevel
-            self.isCharging = isCharging
-            self.chargingRate = chargingRate
-            self.estimatedWattage = estimatedWattage
-            self.timeToFullMinutes = timeToFullMinutes
-            self.expectedFullDate = expectedFullDate
-            self.deviceModel = deviceModel
-            self.batteryHealth = batteryHealth
-            self.isInWarmUpPeriod = isInWarmUpPeriod
-            self.timestamp = timestamp
-        }
-
-        public init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            batteryLevel = try c.decode(Int.self, forKey: .batteryLevel)
-            isCharging = try c.decode(Bool.self, forKey: .isCharging)
-            chargingRate = try c.decode(String.self, forKey: .chargingRate)
-            estimatedWattage = try c.decode(String.self, forKey: .estimatedWattage)
-            timeToFullMinutes = try c.decode(Int.self, forKey: .timeToFullMinutes)
-            expectedFullDate = try c.decode(Date.self, forKey: .expectedFullDate)
-            deviceModel = try c.decode(String.self, forKey: .deviceModel)
-            batteryHealth = try c.decode(String.self, forKey: .batteryHealth)
-            isInWarmUpPeriod = try c.decode(Bool.self, forKey: .isInWarmUpPeriod)
-            // accept either `timestamp` or legacy `computedAt`
-            timestamp = (try? c.decodeIfPresent(Date.self, forKey: .timestamp))
-                     ?? (try? c.decodeIfPresent(Date.self, forKey: .computedAt))
-                     ?? Date()
-        }
-
-        public func encode(to encoder: Encoder) throws {
-            var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(batteryLevel, forKey: .batteryLevel)
-            try c.encode(isCharging, forKey: .isCharging)
-            try c.encode(chargingRate, forKey: .chargingRate)
-            try c.encode(estimatedWattage, forKey: .estimatedWattage)
-            try c.encode(timeToFullMinutes, forKey: .timeToFullMinutes)
-            try c.encode(expectedFullDate, forKey: .expectedFullDate)
-            try c.encode(deviceModel, forKey: .deviceModel)
-            try c.encode(batteryHealth, forKey: .batteryHealth)
-            try c.encode(isInWarmUpPeriod, forKey: .isInWarmUpPeriod)
-            try c.encode(timestamp, forKey: .timestamp)
-        }
-    }
-
-    // Fixed non-changing properties about your activity go here!
-    public var name: String
-    
-    public init(name: String) {
-        self.name = name
-    }
-}
+// Live Activity Attributes - must be defined in extension target
 
 struct PETLLiveActivityExtensionLiveActivity: Widget {
     var body: some WidgetConfiguration {
@@ -364,66 +284,7 @@ struct PETLLiveActivityExtensionLiveActivity: Widget {
     }
 }
 
-extension PETLLiveActivityExtensionAttributes {
-    fileprivate static var preview: PETLLiveActivityExtensionAttributes {
-        PETLLiveActivityExtensionAttributes(name: "PETL Charging")
-    }
-}
 
-extension PETLLiveActivityExtensionAttributes.ContentState {
-    fileprivate static var charging: PETLLiveActivityExtensionAttributes.ContentState {
-        PETLLiveActivityExtensionAttributes.ContentState(
-            batteryLevel: 65,
-            isCharging: true,
-            chargingRate: "Fast Charging",
-            estimatedWattage: "20W",
-            timeToFullMinutes: 45,
-            expectedFullDate: Date().addingTimeInterval(45 * 60),
-            deviceModel: "iPhone 16 Pro",
-            batteryHealth: "Excellent (95%+)",
-            isInWarmUpPeriod: false,
-            timestamp: Date()
-        )
-     }
-     
-     fileprivate static var notCharging: PETLLiveActivityExtensionAttributes.ContentState {
-         PETLLiveActivityExtensionAttributes.ContentState(
-             batteryLevel: 35,
-             isCharging: false,
-             chargingRate: "Not charging",
-             estimatedWattage: "0W",
-             timeToFullMinutes: 0,
-             expectedFullDate: Date(),
-             deviceModel: "iPhone 16 Pro",
-             batteryHealth: "Excellent (95%+)",
-             isInWarmUpPeriod: false,
-             timestamp: Date()
-         )
-     }
-     
-     fileprivate static var warmUp: PETLLiveActivityExtensionAttributes.ContentState {
-         PETLLiveActivityExtensionAttributes.ContentState(
-             batteryLevel: 45,
-             isCharging: true,
-             chargingRate: "Standard Charging",
-             estimatedWattage: "10W",
-             timeToFullMinutes: 75,
-             expectedFullDate: Date().addingTimeInterval(75 * 60),
-             deviceModel: "iPhone 16 Pro",
-             batteryHealth: "Excellent (95%+)",
-             isInWarmUpPeriod: true,
-             timestamp: Date()
-         )
-     }
-}
-
-#Preview("Notification", as: .content, using: PETLLiveActivityExtensionAttributes.preview) {
-   PETLLiveActivityExtensionLiveActivity()
-} contentStates: {
-    PETLLiveActivityExtensionAttributes.ContentState.charging
-    PETLLiveActivityExtensionAttributes.ContentState.notCharging
-    PETLLiveActivityExtensionAttributes.ContentState.warmUp
-}
 
 
 

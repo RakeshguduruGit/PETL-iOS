@@ -99,6 +99,7 @@ struct ContentView: View {
     // Revert from @EnvironmentObject to @ObservedObject on the singleton
     @ObservedObject private var tracker = BatteryTrackingManager.shared
     @StateObject private var analytics = ChargingAnalyticsStore()
+    @ObservedObject private var chargeStateStore = ChargeStateStore.shared
     @State private var snapshot = BatterySnapshot(level: 0, isCharging: false, timestamp: .now)
     @State private var isActivityRunning: Bool = false
     @State private var currentActivityId: String = ""
@@ -263,7 +264,7 @@ struct ContentView: View {
         .onReceive(deviceSvc.$profile.compactMap { $0 }) { _ in
             updateBatteryStats()    // NEW: pick up model + capacity as soon as it publishes
         }
-        .onChange(of: phase) { _, newPhase in
+        .onChange(of: phase) { newPhase in
             if newPhase == .active {
                 // Defensive battery monitoring - ensure it's enabled when app becomes active
                 UIDevice.current.isBatteryMonitoringEnabled = true
@@ -335,8 +336,8 @@ struct ContentView: View {
         // iOS doesn't provide direct battery health via public APIs
         // This is an estimation based on available data and usage patterns
         
-        let currentLevel = tracker.level
-        let isChargingState = tracker.isCharging
+        let currentLevel = Float(chargeStateStore.currentBatteryLevel) / 100.0
+        let isChargingState = chargeStateStore.isCharging
         
         // More sophisticated health estimation
         if isChargingState {
@@ -377,7 +378,7 @@ struct ContentView: View {
     @State private var warmUpEndTime: Date? = nil
     
     private func calculateChargingRate() -> Double {
-        guard tracker.isCharging else { return 0.0 }
+        guard chargeStateStore.isCharging else { return 0.0 }
         
         // During 5-minute warm-up period, return 0.0 to force fallback values
         if isInWarmUpPeriod {
@@ -403,13 +404,13 @@ struct ContentView: View {
         // iOS updates battery % in 5% increments, so we need at least 60 seconds for meaningful data
         guard timeDifference >= 60.0 else { return currentChargingRate }
         
-        let batteryLevelDifference = Double(tracker.level - previousBatteryLevel)
+        let batteryLevelDifference = Double(Float(chargeStateStore.currentBatteryLevel) / 100.0 - previousBatteryLevel)
         
         // Calculate charging rate in %/min
         let chargingRatePerMinute = (batteryLevelDifference * 100.0) / (timeDifference / 60.0)
         
         // Update tracking variables
-        previousBatteryLevel = tracker.level
+        previousBatteryLevel = Float(chargeStateStore.currentBatteryLevel) / 100.0
         lastBatteryCheckTime = currentTime
         
         // Smooth the charging rate (average with previous value)
@@ -438,7 +439,7 @@ struct ContentView: View {
         }
         
         // Use Standard Charging as fallback when no real data available
-        if rate <= 0.0 { 
+        if rate <= 0.0 {
             print("🔋 No charging rate data available, using PETL Standard Charging fallback")
             return "Standard Charging"
         }
@@ -475,7 +476,7 @@ struct ContentView: View {
         }
         
         // Use 10W fallback when no real data available
-        if rate <= 0.0 { 
+        if rate <= 0.0 {
             print("🔋 No charging rate data available, using PETL 10W fallback")
             return "10W"
         }
@@ -542,7 +543,7 @@ struct ContentView: View {
         }
         
         // If no charging rate data available, use PETL fallback calculation
-        if rate <= 0.0 { 
+        if rate <= 0.0 {
             print("🔋 No charging rate data available, using PETL fallback time calculation")
             // Use standard charging rate for fallback calculation
             let fallbackRate = 1.0 // Standard charging rate in %/min
@@ -797,9 +798,9 @@ struct ContentView: View {
         let contentState: [String: Any] = [
             "batteryLevel": Double(tracker.level),
             "isCharging": tracker.isCharging,
-            "chargingRate": chargingRate,
-            "estimatedWattage": estimatedWattage,
-            "timeToFull": estimatedTimeToFull,
+            "chargingRate": analytics.characteristicLabel,
+            "estimatedWattage": analytics.characteristicWatts,
+            "timeToFull": chargeStateStore.currentETAMinutes.map { "\($0)" } ?? "—",
             "deviceModel": deviceModel,
             "batteryHealth": batteryHealth,
             "isInWarmUpPeriod": isInWarmUpPeriod
@@ -839,6 +840,7 @@ struct TabButton: View {
 // MARK: - SwiftUI Content Views (Updated for UIKit Integration)
 struct HomeNavigationContent: View {
     @ObservedObject private var tracker = BatteryTrackingManager.shared
+    @ObservedObject private var chargeStateStore = ChargeStateStore.shared
     @ObservedObject var analytics: ChargingAnalyticsStore
     let deviceModel: String
     let batteryCapacity: String
@@ -892,13 +894,13 @@ struct HomeNavigationContent: View {
                             .rotationEffect(.degrees(-90))
                         
                         // Foreground ring (battery level) - follows PETL spec with smooth animation
-                        if tracker.isCharging {
+                        if chargeStateStore.isCharging {
                             Circle()
-                                .trim(from: 0, to: CGFloat(tracker.level))
+                                .trim(from: 0, to: CGFloat(Float(chargeStateStore.currentBatteryLevel) / 100.0))
                                 .stroke(Color(red: 0.29, green: 0.87, blue: 0.5), lineWidth: 20) // Green when charging
                                 .frame(width: 175, height: 175)
                                 .rotationEffect(.degrees(-90))
-                                .animation(.none, value: tracker.level) // Remove animation to prevent CADisplay errors
+                                .animation(.none, value: chargeStateStore.currentBatteryLevel) // Remove animation to prevent CADisplay errors
                                 .onAppear {
                                     // No animation initialization to avoid CADisplay link notifications
                                 }
@@ -914,7 +916,7 @@ struct HomeNavigationContent: View {
                         // Center content - fixed positioning
                         VStack(spacing: 0) {
                             // Top line text - follows PETL spec - same height for both states
-                            if tracker.isCharging {
+                            if chargeStateStore.isCharging {
                                 Text("iPhone 100% in")
                                     .font(.system(size: 10, weight: .medium))
                                     .foregroundColor(Color(.label))
@@ -933,18 +935,9 @@ struct HomeNavigationContent: View {
                                 .frame(height: 2)
                             
                             // Middle line content - follows PETL spec
-                            if tracker.isCharging {
-                                // Get raw ETA and apply presenter logic
-                                let rawETA = analytics.timeToFullMinutes
-                                let watts = ChargeEstimator.shared.current?.watts ?? 0.0
-                                let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-                                let isChg = BatteryTrackingManager.shared.isCharging
-                                let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
-                                
-                                let token = BatteryTrackingManager.shared.tickToken
-                                let shownETA = FeatureFlags.useETAPresenter
-                                    ? ETAPresenter.shared.presented(rawETA: rawETA, watts: watts, sysPct: sysPct, isCharging: isChg, isWarmup: isWarm, tickToken: token).minutes
-                                    : rawETA
+                            if chargeStateStore.isCharging {
+                                // Use SSOT ETA from snapshot
+                                let shownETA = chargeStateStore.currentETAMinutes
                                 
                                 // Handle special cases
                                 if let minutes = shownETA {
@@ -1160,22 +1153,7 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(tracker.isCharging ? {
-                                    let sysPct = Int(BatteryTrackingManager.shared.level * 100)
-                                    let rawETA = analytics.timeToFullMinutes
-                                              ?? ETAPresenter.shared.lastStableMinutes
-                                              ?? ChargeEstimator.shared.theoreticalMinutesToFull(socPercent: sysPct)
-                                    let watts = ChargeEstimator.shared.current?.watts ?? 0.0
-                                    let isChg = BatteryTrackingManager.shared.isCharging
-                                    let isWarm = ChargeEstimator.shared.current?.isInWarmup ?? false
-                                    
-                                    let token = BatteryTrackingManager.shared.tickToken
-                                    let shownETA = FeatureFlags.useETAPresenter
-                                        ? ETAPresenter.shared.presented(rawETA: rawETA, watts: watts, sysPct: sysPct, isCharging: isChg, isWarmup: isWarm, tickToken: token).minutes
-                                        : rawETA
-                                    
-                                    return shownETA.map { "\($0) min" } ?? "—"
-                                }() : "...")
+                                Text(chargeStateStore.isCharging ? (chargeStateStore.currentETAMinutes.map { "\($0) min" } ?? "—") : "...")
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
@@ -1903,7 +1881,7 @@ struct EnhancedLogMessageRow: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(
-            isEven ? 
+            isEven ?
                 (colorScheme == .dark ? Color(.systemGray6) : Color(.systemBackground)) :
                 (colorScheme == .dark ? Color(.systemGray5) : Color(.systemGray6))
         )

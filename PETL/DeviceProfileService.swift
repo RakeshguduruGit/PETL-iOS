@@ -1,11 +1,16 @@
 import UIKit
 import Combine
 
-struct DeviceProfile {
+struct DeviceProfile: Equatable, Sendable, Codable {
     let rawIdentifier: String
     let name: String
     let capacitymAh: Int
     let chip: String?
+    
+    // SSOT-compatible properties
+    var modelIdentifier: String { rawIdentifier }
+    var maxW: Double? { nil } // TODO: Add maxW support
+    var batteryCapacitymAh: Int? { capacitymAh }
 }
 
 final class DeviceProfileService: ObservableObject {
@@ -46,7 +51,7 @@ final class DeviceProfileService: ObservableObject {
         return deviceNames[identifier] ?? "Unknown Device"
     }
     
-    private func getCapacity(for identifier: String) -> Int {
+    func getCapacity(for identifier: String) -> Int {
         let capacities: [String: Int] = [
             "iPhone14,2": 3095, // iPhone 13 Pro
             "iPhone14,3": 4352, // iPhone 13 Pro Max
@@ -70,7 +75,7 @@ final class DeviceProfileService: ObservableObject {
         return capacities[identifier] ?? 3000 // Default fallback
     }
     
-    private func rawModelIdentifier() -> String {
+    func rawModelIdentifier() -> String {
         var systemInfo = utsname()
         uname(&systemInfo)
         let machineMirror = Mirror(reflecting: systemInfo.machine)

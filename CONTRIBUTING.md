@@ -13,3 +13,8 @@
 - See `docs/RELEASE_QA.md` before merging.
 
 CI will block merges if these are violated (see `scripts/qa_gate.sh`).
+
+## Single Source of Truth (SSOT) Rules
+- **Battery data**: Only `BatteryTrackingManager` may read `UIDevice.current.battery*`. All other code consumes `ChargeStateStore.shared.snapshot`.
+- **ETA usage**: Only `ChargingAnalyticsStore`, `ETAPresenter`, `ChargeEstimator`, and the `BatteryTrackingManager` composer may reference ETA sources. All other code consumes `ChargeStateStore.shared.snapshot.etaMinutes`.
+- **Live Activity content**: Only `SnapshotToLiveActivity.makeContent(from:)` may build `ContentState`. No inline `ContentState(...)` construction.

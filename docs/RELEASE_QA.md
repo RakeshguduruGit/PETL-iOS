@@ -11,7 +11,8 @@
 - No ETA dash/0m while charging.
 - Background updates appear when expected.
 - Startup recovery/reattach behave as designed.
-- QA gate script passes all 8 checks with improved robustness.
+- QA gate script passes all 11 checks with improved robustness.
+- ✅ ETA single-source: No direct ETA calls outside SSOT components; UI/LA read snapshot.etaMinutes.
 
 ## Quick runbook (Debug or Release)
 1) Launch while charging (before app active) → defers, then `🎬` + `✅`.

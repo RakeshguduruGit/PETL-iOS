@@ -1,32 +1,32 @@
-import ActivityKit
 import Foundation
+import ActivityKit
 
-public struct PETLLiveActivityExtensionAttributes: ActivityAttributes {
-    public struct ContentState: Codable, Hashable {
-        public var batteryLevel: Int
+// Live Activity attributes used by both the app and the extension.
+public struct PETLLiveActivityExtensionAttributes: ActivityAttributes, Sendable {
+
+    // Dynamic content rendered on the Island/Lock Screen.
+    public struct ContentState: Codable, Hashable, Sendable {
+        public var batteryLevel: Int                // 0...100
         public var isCharging: Bool
-        public var chargingRate: String
-        public var estimatedWattage: String
-        public var timeToFullMinutes: Int
-        public var expectedFullDate: Date
-        public var deviceModel: String
-        public var batteryHealth: String
+        public var chargingRate: String             // e.g., "10.0 W"
+        public var estimatedWattage: String         // e.g., "10.0W"
+        public var timeToFullMinutes: Int           // ETA minutes (>=0)
+        public var expectedFullDate: Date           // ETA absolute date
+        public var deviceModel: String              // e.g., "iPhone17,1"
+        public var batteryHealth: String            // e.g., "100%"
         public var isInWarmUpPeriod: Bool
-
-        // Canonical field name
-        public var timestamp: Date
-
-        // Back-compat decoder so older pushes with `computedAt` won't crash
-        enum CodingKeys: String, CodingKey {
-            case batteryLevel, isCharging, chargingRate, estimatedWattage,
-                 timeToFullMinutes, expectedFullDate, deviceModel, batteryHealth,
-                 isInWarmUpPeriod, timestamp, computedAt
-        }
+        public var timestamp: Date                  // snapshot timestamp
 
         public init(
-            batteryLevel: Int, isCharging: Bool, chargingRate: String,
-            estimatedWattage: String, timeToFullMinutes: Int, expectedFullDate: Date,
-            deviceModel: String, batteryHealth: String, isInWarmUpPeriod: Bool,
+            batteryLevel: Int,
+            isCharging: Bool,
+            chargingRate: String,
+            estimatedWattage: String,
+            timeToFullMinutes: Int,
+            expectedFullDate: Date,
+            deviceModel: String,
+            batteryHealth: String,
+            isInWarmUpPeriod: Bool,
             timestamp: Date
         ) {
             self.batteryLevel = batteryLevel
@@ -40,42 +40,11 @@ public struct PETLLiveActivityExtensionAttributes: ActivityAttributes {
             self.isInWarmUpPeriod = isInWarmUpPeriod
             self.timestamp = timestamp
         }
-
-        public init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            batteryLevel = try c.decode(Int.self, forKey: .batteryLevel)
-            isCharging = try c.decode(Bool.self, forKey: .isCharging)
-            chargingRate = try c.decode(String.self, forKey: .chargingRate)
-            estimatedWattage = try c.decode(String.self, forKey: .estimatedWattage)
-            timeToFullMinutes = try c.decode(Int.self, forKey: .timeToFullMinutes)
-            expectedFullDate = try c.decode(Date.self, forKey: .expectedFullDate)
-            deviceModel = try c.decode(String.self, forKey: .deviceModel)
-            batteryHealth = try c.decode(String.self, forKey: .batteryHealth)
-            isInWarmUpPeriod = try c.decode(Bool.self, forKey: .isInWarmUpPeriod)
-            // accept either `timestamp` or legacy `computedAt`
-            timestamp = (try? c.decodeIfPresent(Date.self, forKey: .timestamp))
-                     ?? (try? c.decodeIfPresent(Date.self, forKey: .computedAt))
-                     ?? Date()
-        }
-
-        public func encode(to encoder: Encoder) throws {
-            var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(batteryLevel, forKey: .batteryLevel)
-            try c.encode(isCharging, forKey: .isCharging)
-            try c.encode(chargingRate, forKey: .chargingRate)
-            try c.encode(estimatedWattage, forKey: .estimatedWattage)
-            try c.encode(timeToFullMinutes, forKey: .timeToFullMinutes)
-            try c.encode(expectedFullDate, forKey: .expectedFullDate)
-            try c.encode(deviceModel, forKey: .deviceModel)
-            try c.encode(batteryHealth, forKey: .batteryHealth)
-            try c.encode(isInWarmUpPeriod, forKey: .isInWarmUpPeriod)
-            try c.encode(timestamp, forKey: .timestamp)
-        }
     }
 
-    // Fixed non-changing properties about your activity go here!
+    // Static attributes (rarely change while activity is active).
     public var name: String
-    
+
     public init(name: String) {
         self.name = name
     }

@@ -6,8 +6,17 @@
 //
 
 import SwiftUI
+
+#if canImport(ActivityKit)
 import ActivityKit
-import OneSignalFramework
+#endif
+
+#if canImport(OneSignalFramework)
+import OneSignalFramework   // SPM v5+
+#elseif canImport(OneSignal)
+import OneSignal            // legacy Pods
+#endif
+
 
 import os.log
 import BackgroundTasks
@@ -69,6 +78,11 @@ struct PETLApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .task {
+                    if #available(iOS 16.2, *) {
+                        startLiveActivityTokenWatcher()
+                    }
+                }
                 .onAppear {
                     addToAppLogs("🚀 PETL App Started")
                     addToAppLogs("📱 App Version: 1.0")
@@ -81,8 +95,8 @@ struct PETLApp: App {
                     // Migrate legacy data to unified DB
                     ChargeDB.shared.migrateLegacyIfNeeded()
                 }
-                .onChange(of: phase) {
-                    if phase == .active {
+                .onChange(of: phase) { newPhase in
+                    if newPhase == .active {
                         // BatteryTrackingManager manages this already; avoid log spam + toggling.
                         BatteryTrackingManager.shared.emitSnapshotNow("foreground")
                         LiveActivityManager.shared.onAppWillEnterForeground()
@@ -121,8 +135,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             forName: UIDevice.batteryStateDidChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            let s = UIDevice.current.batteryState
-            print("🔌 Battery state changed (launch observer): \(s.rawValue)")
+            Task { @MainActor in
+                let s = ChargeStateStore.shared.currentState
+                print("🔌 Battery state changed (launch observer): \(s.rawValue)")
+            }
         }
         
         // Initialize OneSignal with comprehensive debugging and error handling
@@ -162,14 +178,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     private func checkChargingAtLaunchWithRetry(timeout: TimeInterval, interval: TimeInterval) async {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            let state = UIDevice.current.batteryState
+            let state = ChargeStateStore.shared.currentState
             if state == .charging || state == .full {
                 addToAppLogs("🔄 Detected charging at launch – starting Live Activity")
                 if Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty {
-                    // Seed presenter before launch-start
-                    let pct = Int(UIDevice.current.batteryLevel * 100)
-                    ETAPresenter.shared.resetForNewSession()
-                    ETAPresenter.shared.resetSession(systemPercent: pct)
+                    // Start Live Activity directly (no need for ETAPresenter)
                     await LiveActivityManager.shared.startActivity(reason: .chargeBegin)
                 }
                 return
@@ -186,20 +199,22 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         print("🔄 Background App Refresh triggered")
         appLogger.info("🔄 Background App Refresh triggered")
         
-        // Check if we need to start a Live Activity
-        let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
-        let hasActivities = !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty
-        
-        if isCharging && !hasActivities {
-            // Start Live Activity if charging but no activity exists
-            LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"])
-            completionHandler(.newData)
-        } else if !isCharging && hasActivities {
-            // End Live Activity if not charging but activity exists
-            LiveActivityManager.shared.handleRemotePayload(["batteryState": "unplugged"])
-            completionHandler(.newData)
-        } else {
-            completionHandler(.noData)
+        Task { @MainActor in
+            // Check if we need to start a Live Activity
+            let isCharging = ChargeStateStore.shared.isCharging
+            let hasActivities = !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty
+            
+            if isCharging && !hasActivities {
+                // Start Live Activity if charging but no activity exists
+                LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"])
+                completionHandler(.newData)
+            } else if !isCharging && hasActivities {
+                // End Live Activity if not charging but activity exists
+                LiveActivityManager.shared.handleRemotePayload(["batteryState": "unplugged"])
+                completionHandler(.newData)
+            } else {
+                completionHandler(.noData)
+            }
         }
     }
     
@@ -314,11 +329,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             addToAppLogs("⏳ BG refresh expired")
         }
 
-        Task {
+        Task { @MainActor in
             addToAppLogs("🔧 BG refresh fired")
             
             // Check if still charging - if not, end all activities
-            let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
+            let isCharging = ChargeStateStore.shared.isCharging
             if !isCharging {
                 addToAppLogs("🔌 BG refresh: not charging, ending activities")
                 await LiveActivityManager.shared.endAll("bg-not-charging")
@@ -355,11 +370,11 @@ class BackgroundTaskScheduler {
             task.setTaskCompleted(success: false)
         }
         
-        // Check if we need to start/end Live Activity
-        let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
-        let hasActivities = !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty
-        
         Task { @MainActor in
+            // Check if we need to start/end Live Activity
+            let isCharging = ChargeStateStore.shared.isCharging
+            let hasActivities = !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty
+            
             if isCharging && !hasActivities {
                 // Start Live Activity if charging but no activity exists
                 LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"])
@@ -391,3 +406,70 @@ class BackgroundTaskScheduler {
         }
     }
 }
+
+
+#if canImport(ActivityKit)
+@available(iOS 16.2, *)
+fileprivate func startLiveActivityTokenWatcher() {
+    Task.detached(priority: .background) {
+        // 1) Pick up activities that already exist at launch
+        for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+            Task.detached(priority: .background) {
+                for await tokenData in activity.pushTokenUpdates {
+                    let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()
+                    print("🔑 LiveActivity APNs token=\(tokenHex)")
+                    #if canImport(OneSignalFramework)
+                    OneSignal.LiveActivities.enter(activity.id, withToken: tokenHex) { _ in
+                        print("📡 OneSignal enter OK id=\(activity.id.prefix(6))")
+                    } withFailure: { error in
+                        print("❌ OneSignal enter error: \(error?.localizedDescription ?? "unknown")")
+                    }
+                    #endif
+                }
+            }
+            Task.detached(priority: .background) {
+                for await state in activity.activityStateUpdates {
+                    if case .ended = state {
+                        #if canImport(OneSignalFramework)
+                        OneSignal.LiveActivities.exit(activity.id) { _ in
+                            print("📡 OneSignal exit OK id=\(activity.id.prefix(6))")
+                        } withFailure: { error in
+                            print("❌ OneSignal exit error: \(error?.localizedDescription ?? "unknown")")
+                        }
+                        #endif
+                    }
+                }
+            }
+        }
+        // 2) Observe activities created after launch
+        for await activity in Activity<PETLLiveActivityExtensionAttributes>.activityUpdates {
+            Task.detached(priority: .background) {
+                for await tokenData in activity.pushTokenUpdates {
+                    let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()
+                    print("🔑 LiveActivity APNs token=\(tokenHex)")
+                    #if canImport(OneSignalFramework)
+                    OneSignal.LiveActivities.enter(activity.id, withToken: tokenHex) { _ in
+                        print("📡 OneSignal enter OK id=\(activity.id.prefix(6))")
+                    } withFailure: { error in
+                        print("❌ OneSignal enter error: \(error?.localizedDescription ?? "unknown")")
+                    }
+                    #endif
+                }
+            }
+            Task.detached(priority: .background) {
+                for await state in activity.activityStateUpdates {
+                    if case .ended = state {
+                        #if canImport(OneSignalFramework)
+                        OneSignal.LiveActivities.exit(activity.id) { _ in
+                            print("📡 OneSignal exit OK id=\(activity.id.prefix(6))")
+                        } withFailure: { error in
+                            print("❌ OneSignal exit error: \(error?.localizedDescription ?? "unknown")")
+                        }
+                        #endif
+                    }
+                }
+            }
+        }
+    }
+}
+#endif

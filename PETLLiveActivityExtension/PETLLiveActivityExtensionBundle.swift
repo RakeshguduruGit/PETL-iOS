@@ -11,8 +11,6 @@ import SwiftUI
 @main
 struct PETLLiveActivityExtensionBundle: WidgetBundle {
     var body: some Widget {
-        PETLLiveActivityExtension()
-        PETLLiveActivityExtensionControl()
         PETLLiveActivityExtensionLiveActivity()
     }
 }

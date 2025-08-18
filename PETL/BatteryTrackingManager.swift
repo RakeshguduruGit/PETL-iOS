@@ -439,6 +439,16 @@ final class BatteryTrackingManager: ObservableObject {
         let displayW   = mustFreeze ? (lastStableW ?? wRaw) : wRaw
         lastDisplayed = (displayW, displayETA)
         
+        // MARK: - SSOT: Build and apply canonical charging snapshot
+        buildAndApplySnapshot(
+            systemPct: systemPct,
+            isChargingNow: isChargingNow,
+            displayW: displayW,
+            displayETA: displayETA,
+            out: out,
+            now: now
+        )
+        
 
         
 
@@ -531,6 +541,109 @@ final class BatteryTrackingManager: ObservableObject {
         }
 
     }
+    
+    // MARK: - SSOT: Build and apply canonical charging snapshot
+    private func buildAndApplySnapshot(
+        systemPct: Int,
+        isChargingNow: Bool,
+        displayW: Double,
+        displayETA: Int?,
+        out: SafeChargingSmoother.Output?,
+        now: Date
+    ) {
+        // Get current device profile
+        let deviceService = DeviceProfileService.shared
+        let modelIdentifier = deviceService.rawModelIdentifier()
+        let capacitymAh = deviceService.getCapacity(for: modelIdentifier)
+        
+        let deviceProfile = DeviceProfile(
+            rawIdentifier: modelIdentifier,
+            name: "Unknown Device", // TODO: Get friendly name from DeviceProfileService
+            capacitymAh: capacitymAh,
+            chip: nil
+        )
+        
+        // Determine charging state
+        let chargingState: ChargingState
+        if isChargingNow {
+            if systemPct >= 100 {
+                chargingState = .full
+            } else {
+                chargingState = .charging
+            }
+        } else {
+            chargingState = .unplugged
+        }
+        
+        // Get rate percentage per minute from smoother output
+        let ratePctPerMin: Double?
+        if let smootherOutput = out {
+            ratePctPerMin = smootherOutput.pctPerMin
+        } else {
+            ratePctPerMin = nil
+        }
+        
+        // Build the canonical snapshot
+        let snapshot = ChargingSnapshot(
+            ts: now,
+            socPercent: systemPct,
+            state: chargingState,
+            watts: displayW.isFinite ? displayW : nil,
+            ratePctPerMin: ratePctPerMin,
+            etaMinutes: displayETA,
+            device: deviceProfile
+        )
+        
+        // Apply to central store
+        ChargeStateStore.shared.apply(snapshot)
+        
+        // Log the snapshot application
+        addToAppLogs("📊 SSOT Snapshot applied — \(systemPct)% \(chargingState.rawValue) \(displayW.isFinite ? String(format:"%.1fW", displayW) : "nil") \(displayETA.map{"\($0)m"} ?? "nil")")
+    }
+    
+    // MARK: - SSOT: Build basic snapshot (when smooth analytics disabled)
+    private func buildBasicSnapshot(systemPct: Int, isChargingNow: Bool, now: Date) {
+        // Get current device profile
+        let deviceService = DeviceProfileService.shared
+        let modelIdentifier = deviceService.rawModelIdentifier()
+        let capacitymAh = deviceService.getCapacity(for: modelIdentifier)
+        
+        let deviceProfile = DeviceProfile(
+            rawIdentifier: modelIdentifier,
+            name: "Unknown Device", // TODO: Get friendly name from DeviceProfileService
+            capacitymAh: capacitymAh,
+            chip: nil
+        )
+        
+        // Determine charging state
+        let chargingState: ChargingState
+        if isChargingNow {
+            if systemPct >= 100 {
+                chargingState = .full
+            } else {
+                chargingState = .charging
+            }
+        } else {
+            chargingState = .unplugged
+        }
+        
+        // Build basic snapshot without advanced analytics
+        let snapshot = ChargingSnapshot(
+            ts: now,
+            socPercent: systemPct,
+            state: chargingState,
+            watts: nil, // No watts data in basic mode
+            ratePctPerMin: nil, // No rate data in basic mode
+            etaMinutes: nil, // No ETA in basic mode
+            device: deviceProfile
+        )
+        
+        // Apply to central store
+        ChargeStateStore.shared.apply(snapshot)
+        
+        // Log the basic snapshot application
+        addToAppLogs("📊 SSOT Basic snapshot applied — \(systemPct)% \(chargingState.rawValue)")
+    }
 
     // MARK: - Battery Monitoring Setup
     private func setupBatteryMonitoring() {
@@ -600,6 +713,11 @@ final class BatteryTrackingManager: ObservableObject {
 
         // Tick smoothing & pause on every snapshot
         tickSmoothingAndPause(isChargingNow: isChargingNow, systemPct: systemPct, now: now)
+        
+        // SSOT: Build snapshot even when smooth analytics is disabled
+        if !FeatureFlags.smoothChargingAnalytics {
+            buildBasicSnapshot(systemPct: systemPct, isChargingNow: isChargingNow, now: now)
+        }
     }
     
     // MARK: - 7-second debounce
@@ -722,6 +840,17 @@ final class BatteryTrackingManager: ObservableObject {
             await LiveActivityManager.shared.endActive("UNPLUG-DEBOUNCED")
             ChargeEstimator.shared.endSession(at: Date())
             addToAppLogs("🛑 Charge end — estimator cleared")
+            
+            // Update SSOT with unplugged state (ETA will be automatically cleared by store)
+            await self.buildAndApplySnapshot(
+                systemPct: Int(self.level * 100),
+                isChargingNow: false,
+                displayW: 0.0,
+                displayETA: nil,
+                out: nil,
+                now: Date()
+            )
+            addToAppLogs("🧹 ETA cleared in SSOT — unplugged state")
         }
     }
     

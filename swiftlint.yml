@@ -81,6 +81,30 @@ custom_rules:
     message: "Use addToAppLogsCritical for 🎬 logs."
     severity: error
 
+  # SSOT: Battery data must come from ChargeStateStore
+  ban_uidevice_battery_outside_manager:
+    name: "Battery SSOT"
+    regex: "UIDevice\\.current\\.battery(Level|State)"
+    excluded: "PETL/BatteryTrackingManager.swift"
+    message: "Read battery level/state only in BatteryTrackingManager; consume ChargeStateStore.snapshot."
+    severity: error
+
+  # SSOT: ETA must come from snapshot
+  ban_timeToFull_direct_ui:
+    name: "ETA from SSOT"
+    regex: "timeToFullMinutes|lastStableMinutes|theoreticalMinutesToFull"
+    excluded: "PETL/BatteryTrackingManager.swift"
+    message: "ETA must be composed into ChargingSnapshot; UI must read snapshot.etaMinutes."
+    severity: error
+
+  # SSOT: Live Activity must use mapper
+  ban_live_activity_inline_mapping:
+    name: "Use SnapshotToLiveActivity"
+    regex: "ContentState\\("
+    excluded: "PETL/SnapshotToLiveActivity.swift"
+    message: "Build ContentState only via SnapshotToLiveActivity.makeContent(from:)."
+    severity: error
+
 # General code quality rules
 line_length:
   warning: 120
