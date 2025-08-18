@@ -1172,11 +1172,10 @@ final class BatteryTrackingManager: ObservableObject {
 }
 
 extension BatteryTrackingManager {
-    static let shared = BatteryTrackingManager()
     private static let bgLog = Logger(subsystem: "com.gopetl.PETL", category: "bg")
 
     func recordBackgroundLog(soc: Int, watts: Double) {
-        Self.bgLog.info("📝 BG log — soc=\(soc) watts=\(watts, format: .number) @\(Date().timeIntervalSince1970, format: .number)")
+        Self.bgLog.info("📝 BG log — soc=\(soc) watts=\(watts) @\(Date().timeIntervalSince1970)")
         // If you have a history/DB pipeline, append here (source: .push)
     }
 } 

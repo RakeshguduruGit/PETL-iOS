@@ -158,7 +158,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // Setup OneSignal Live Activity
         #if canImport(OneSignalLiveActivities)
-        OneSignalLiveActivity.setup(PETLLiveActivityAttributes.self)
+        OneSignal.LiveActivities.setup(PETLLiveActivityAttributes.self)
         #endif
         
         // Configure LiveActivityManager (single source of truth)
@@ -186,7 +186,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             let state = ChargeStateStore.shared.currentState
             if state == .charging || state == .full {
                 addToAppLogs("🔄 Detected charging at launch – starting Live Activity")
-                if Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty {
+                if Activity<PETLLiveActivityAttributes>.activities.isEmpty {
                     // Start Live Activity directly (no need for ETAPresenter)
                     await LiveActivityManager.shared.startActivity(reason: .chargeBegin)
                 }
@@ -318,7 +318,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
         let soc = (userInfo["soc"] as? Int) ?? -1
         let watts = (userInfo["watts"] as? Double) ?? 0.0
-        appLogger.info("📩 Silent push — soc=\(soc) watts=\(watts, format: .number)")
+        appLogger.info("📩 Silent push — soc=\(soc) watts=\(watts)")
 
         Task {
             let newState = PETLLiveActivityAttributes.ContentState(
@@ -333,7 +333,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             completionHandler(.newData)
         }
     }
-    }
     
     // MARK: - Background Refresh Support
     func registerBackgroundTasks() {
@@ -347,22 +346,22 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         req.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
         do { 
             try BGTaskScheduler.shared.submit(req)
-            addToAppLogs("✅ BG refresh scheduled for \(minutes) minutes")
+            Task { @MainActor in addToAppLogs("✅ BG refresh scheduled for \(minutes) minutes") }
         } catch { 
-            addToAppLogs("⚠️ BG submit failed: \(error)") 
+            Task { @MainActor in addToAppLogs("⚠️ BG submit failed: \(error)") }
         }
     }
     
     func cancelRefresh() {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: refreshId)
-        addToAppLogs("🛑 BG refresh cancelled")
+        Task { @MainActor in addToAppLogs("🛑 BG refresh cancelled") }
     }
     
     func handleRefresh(task: BGAppRefreshTask) {
         scheduleRefresh(in: 30) // schedule the next one
 
         task.expirationHandler = {
-            addToAppLogs("⏳ BG refresh expired")
+            Task { @MainActor in addToAppLogs("⏳ BG refresh expired") }
         }
 
         Task { @MainActor in
@@ -409,7 +408,7 @@ class BackgroundTaskScheduler {
         Task { @MainActor in
             // Check if we need to start/end Live Activity
             let isCharging = ChargeStateStore.shared.isCharging
-            let hasActivities = !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty
+            let hasActivities = !Activity<PETLLiveActivityAttributes>.activities.isEmpty
             
             if isCharging && !hasActivities {
                 // Start Live Activity if charging but no activity exists
@@ -449,7 +448,7 @@ class BackgroundTaskScheduler {
 fileprivate func startLiveActivityTokenWatcher() {
     Task.detached(priority: .background) {
         // 1) Pick up activities that already exist at launch
-        for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+        for activity in Activity<PETLLiveActivityAttributes>.activities {
             Task.detached(priority: .background) {
                 for await tokenData in activity.pushTokenUpdates {
                     let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()
@@ -478,7 +477,7 @@ fileprivate func startLiveActivityTokenWatcher() {
             }
         }
         // 2) Observe activities created after launch
-        for await activity in Activity<PETLLiveActivityExtensionAttributes>.activityUpdates {
+        for await activity in Activity<PETLLiveActivityAttributes>.activityUpdates {
             Task.detached(priority: .background) {
                 for await tokenData in activity.pushTokenUpdates {
                     let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()

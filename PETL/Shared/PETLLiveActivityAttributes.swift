@@ -1,4 +1,3 @@
-import Foundation
 import ActivityKit
 #if canImport(OneSignalFramework)
 import OneSignalFramework
