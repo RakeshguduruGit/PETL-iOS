@@ -156,6 +156,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         print("✅ OneSignal initialized successfully")
         appLogger.info("✅ OneSignal initialized successfully")
         
+        // Setup OneSignal Live Activity
+        #if canImport(OneSignalLiveActivities)
+        OneSignalLiveActivity.setup(PETLLiveActivityAttributes.self)
+        #endif
+        
         // Configure LiveActivityManager (single source of truth)
         LiveActivityManager.shared.configure()
         
@@ -297,6 +302,37 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in
             LiveActivityManager.shared.handleRemotePayload(data)
         }
+    }
+    
+    // Silent push entrypoint (content-available:1)
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable : Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+
+        let aps = userInfo["aps"] as? [String: Any]
+        let isSilent = (aps?["content-available"] as? Int) == 1
+        guard isSilent else {
+            completionHandler(.noData)
+            return
+        }
+
+        let soc = (userInfo["soc"] as? Int) ?? -1
+        let watts = (userInfo["watts"] as? Double) ?? 0.0
+        appLogger.info("📩 Silent push — soc=\(soc) watts=\(watts, format: .number)")
+
+        Task {
+            let newState = PETLLiveActivityAttributes.ContentState(
+                soc: max(0, soc),
+                watts: max(0.0, watts),
+                updatedAt: .now
+            )
+            for activity in Activity<PETLLiveActivityAttributes>.activities {
+                await activity.update(using: newState)
+            }
+            BatteryTrackingManager.shared.recordBackgroundLog(soc: soc, watts: watts)
+            completionHandler(.newData)
+        }
+    }
     }
     
     // MARK: - Background Refresh Support
