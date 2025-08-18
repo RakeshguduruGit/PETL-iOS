@@ -618,10 +618,14 @@ final class PETLOrchestrator {
     var foregoundTickSeconds: TimeInterval = 60
     var backgroundAcceptanceSeconds: TimeInterval = 300 // 5 minutes
     var capacityWhEffective: Double = 12.0 // Default iPhone capacity
+
+    // Simulation state & reliability gate
+    private var socSim: Double = 0.0
+    private var reliabilityCandidate: (value: Int, count: Int, firstSeen: Date)?
     
     // State
     private var foregroundTimer: DispatchSourceTimer?
-    private var lastTickAt: Date = Date()
+    private var lastTickAt: Date = .distantPast
     
     // DB sinks (to be wired)
     struct DBSinks {
@@ -661,61 +665,129 @@ final class PETLOrchestrator {
     @MainActor
     private func tick(kind: TickKind, reason: String) async {
         let now = Date()
-        let dt = now.timeIntervalSince(lastTickAt)
+        let defaultDT: TimeInterval = (kind == .fg) ? foregoundTickSeconds : backgroundAcceptanceSeconds
+        let dt = max(1.0, lastTickAt == .distantPast ? defaultDT : now.timeIntervalSince(lastTickAt))
         lastTickAt = now
-        
+
+        // Gate: only work while charging
         guard ChargingSessionManager.shared.isChargingActive else {
             addToAppLogs("⛔️ \(kind == .fg ? "FG" : "BG") tick suppressed — not charging")
-            lastTickAt = now
             return
         }
-        
-        // Measure: read battery level if available
-        let measuredSoc = ChargeStateStore.shared.currentBatteryLevel
-        
-        // Simulate: watts via SoC band + thermal factor (simplified)
-        let simWatts = simulateWatts(soc: measuredSoc)
-        let simSoc = measuredSoc // For now, use measured as simulated
-        
-        // Fan-out updates
+
+        // 1) Read current status + measured SoC (0-100)
+        let isCharging = ChargeStateStore.shared.isCharging
+        var measuredSoc = ChargeStateStore.shared.currentBatteryLevel
+        measuredSoc = max(0, min(100, measuredSoc))
+        // Initialize socSim on first tick on the main actor
+        if socSim == 0.0 { socSim = Double(measuredSoc) }
+
+        // 2) Reliability gate — accept 5% steps only after 2 confirmations spaced apart
+        var usedMeasured = false
+        if acceptIfReliable(newValue: measuredSoc, kind: kind, now: now) {
+            // Gentle course-correct (±1%) toward measured
+            let error = Double(measuredSoc) - socSim
+            let correction = max(-1.0, min(1.0, error))
+            socSim += correction
+            usedMeasured = true
+        }
+
+        // 3) Simulate power and integrate SoC between measurements
+        let watts = estimatedWatts(for: Int(round(socSim)), isCharging: isCharging)
+        if isCharging {
+            let dE_Wh = watts * dt / 3600.0
+            let dSoC = dE_Wh / max(0.1, capacityWhEffective) * 100.0
+            socSim = min(100.0, socSim + dSoC)
+        }
+        let trickle = watts < 10.0
+
+        // 4) Compute ETA based on current rate (smoothed by 10-min window in analytics if wired)
+        let ratePctPerMin = (watts / max(0.1, capacityWhEffective)) * (100.0 / 60.0)
+        let remPct = max(0.0, 100.0 - socSim)
+        let etaMinutes = ratePctPerMin > 0 ? remPct / ratePctPerMin : 0
+
+        // Stop-linger: if unplug/full or ETA<=0, end session and stop updates
+        if !isCharging || socSim >= 100.0 || etaMinutes <= 0.0 {
+            addToAppLogs("🏁 Session completed or not charging — ending activity")
+            NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
+            // Best-effort: also end live activities immediately
+            await LiveActivityManager.shared.endAll("eta-0-or-unplug")
+            return
+        }
+
+        // 5) Fan-out to Live Activity and UI
         let contentState = PETLLiveActivityAttributes.ContentState(
-            soc: simSoc,
-            watts: simWatts,
+            soc: Int(round(socSim)),
+            watts: watts,
             updatedAt: now,
             isCharging: true,
-            timeToFullMinutes: 0, // TODO: calculate from ETA
-            expectedFullDate: Date().addingTimeInterval(3600), // TODO: calculate
-            chargingRate: "\(Int(simWatts))W",
-            batteryLevel: simSoc,
-            estimatedWattage: "\(Int(simWatts))W"
+            timeToFullMinutes: Int(etaMinutes.rounded()),
+            expectedFullDate: now.addingTimeInterval(etaMinutes * 60.0),
+            chargingRate: String(format: "%.1fW", watts),
+            batteryLevel: Int(round(socSim)),
+            estimatedWattage: String(format: "%.1fW", watts)
         )
-        
-        // Update Live Activity
+
         for activity in Activity<PETLLiveActivityAttributes>.activities {
             await activity.update(using: contentState)
         }
-        
-        // Post notification for UI refresh
+
         NotificationCenter.default.post(name: .petlOrchestratorTick, object: nil, userInfo: [
-            "soc": simSoc,
-            "watts": simWatts,
-            "trickle": simWatts < 10.0
+            "soc": Int(round(socSim)),
+            "watts": watts,
+            "trickle": trickle,
+            "kind": (kind == .fg ? "fg" : "bg"),
+            "etaMin": Int(etaMinutes.rounded())
         ])
-        
-        // App log
-        addToAppLogs("🧮 \(kind == .fg ? "FG" : "BG") tick — soc=\(simSoc)% watts=\(Int(simWatts))W\(simWatts < 10.0 ? " (trickle)" : "")")
-        
-        // DB sinks (if wired)
-        dbSinks.insertSoc?(simSoc, now)
-        dbSinks.insertPower?(simWatts, now)
+
+        addToAppLogs("🧮 \(kind == .fg ? "FG" : "BG") tick — soc=\(Int(round(socSim)))% watts=\(String(format: "%.1f", watts))\(trickle ? " (trickle)" : "") ETA=\(Int(etaMinutes.rounded()))m")
+
+        // 6) Optional DB sinks
+        dbSinks.insertSoc?(Int(round(socSim)), now)
+        dbSinks.insertPower?(watts, now)
         dbSinks.recomputeAnalytics?()
     }
+
+    // Accept a new 5% boundary only after 2 confirmations spaced in time
+    private func acceptIfReliable(newValue: Int, kind: TickKind, now: Date) -> Bool {
+        // snap to nearest 5% boundary to avoid 1-2% noise
+        let snapped = max(0, min(100, (newValue / 5) * 5))
+        if let c = reliabilityCandidate, c.value == snapped {
+            let count = c.count + 1
+            let minGap = (kind == .fg) ? max(90.0, foregoundTickSeconds * 1.5) : backgroundAcceptanceSeconds
+            if now.timeIntervalSince(c.firstSeen) >= minGap && count >= 2 {
+                reliabilityCandidate = nil
+                return true
+            } else {
+                reliabilityCandidate = (snapped, count, c.firstSeen)
+                return false
+            }
+        } else {
+            reliabilityCandidate = (snapped, 1, now)
+            return false
+        }
+    }
     
-    private func simulateWatts(soc: Int) -> Double {
-        // Simplified simulation - in reality this would be more sophisticated
-        if soc >= 80 { return 5.0 } // trickle
-        if soc >= 50 { return 15.0 } // normal
-        return 20.0 // fast
+    // Thermal-aware wattage estimate with SoC bands; returns 0 if not charging
+    private func estimatedWatts(for soc: Int, isCharging: Bool) -> Double {
+        guard isCharging else { return 0.0 }
+        let base: Double = 10.0
+        let band: Double
+        switch soc {
+        case ..<20:  band = 1.0
+        case 20..<50: band = 1.0
+        case 50..<80: band = 0.75
+        default:      band = 0.5
+        }
+        let thermal: Double
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: thermal = 1.0
+        case .fair:    thermal = 0.9
+        case .serious: thermal = 0.75
+        case .critical:thermal = 0.6
+        @unknown default: thermal = 0.9
+        }
+        return max(5.0, base * band * thermal)
     }
     
     @MainActor
