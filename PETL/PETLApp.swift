@@ -101,10 +101,13 @@ struct PETLApp: App {
                         BatteryTrackingManager.shared.emitSnapshotNow("foreground")
                         LiveActivityManager.shared.onAppWillEnterForeground()
                         
-                        // NEW: Ensure UI pulls fresh data at launch
+                        // Ensure UI pulls fresh data at launch
                         DispatchQueue.main.async {
-                            let _ = BatteryTrackingManager.shared.historyPointsFromDB(hours: 24) // warms up
+                            _ = BatteryTrackingManager.shared.historyPointsFromDB(hours: 24) // warms up
                         }
+                    } else if newPhase == .background {
+                        // Ask iOS for a new BG refresh window after we background
+                        appDelegate.scheduleRefresh(in: 15)
                     }
                 }
         }
@@ -177,8 +180,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         backgroundTaskScheduler = BackgroundTaskScheduler()
         backgroundTaskScheduler?.registerBackgroundTasks()
         
-        // Register background refresh tasks
+        // Register background refresh tasks (our AppDelegate-managed identifier)
         registerBackgroundTasks()
+        
+        // Kick off the first BG refresh window; handleRefresh(task:) will reschedule itself.
+        scheduleRefresh(in: 15) // use 30 if you want to be gentler
         
         return true
     }
