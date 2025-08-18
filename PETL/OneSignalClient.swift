@@ -80,7 +80,7 @@ final class OneSignalClient {
     }
     
     /// Updates a Live Activity remotely via OneSignal's API
-    func updateLiveActivityRemote(activityId: String, state: PETLLiveActivityExtensionAttributes.ContentState) {
+    func updateLiveActivityRemote(activityId: String, state: PETLLiveActivityAttributes.ContentState) {
         guard let appId = appIdNonEmpty, let key = restAPIKeyNonEmpty else { 
             osLogger.error("❌ OneSignal not configured for Live Activity updates")
             return 

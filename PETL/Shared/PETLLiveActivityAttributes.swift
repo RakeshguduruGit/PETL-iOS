@@ -6,20 +6,18 @@ import OneSignalFramework
 import OneSignalLiveActivities
 #endif
 
-public struct PETLLiveActivityAttributes: ActivityAttributes
-#if canImport(OneSignalLiveActivities)
-, OneSignalLiveActivityAttributes
-#endif
-{
+public struct PETLLiveActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
         public var soc: Int
         public var watts: Double
         public var updatedAt: Date
-        public init(soc: Int, watts: Double, updatedAt: Date = .now) {
+        
+        public init(soc: Int, watts: Double, updatedAt: Date = Date()) {
             self.soc = soc
             self.watts = watts
             self.updatedAt = updatedAt
         }
     }
+    
     public init() {}
 }

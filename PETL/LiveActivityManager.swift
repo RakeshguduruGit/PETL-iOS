@@ -31,7 +31,7 @@ private var isForeground: Bool {
 // MARK: - Activity Coordinator Actor
 actor ActivityCoordinator {
     static let shared = ActivityCoordinator()
-    private var current: Activity<PETLLiveActivityExtensionAttributes>? = nil
+    private var current: Activity<PETLLiveActivityAttributes>? = nil
     private var isRequesting = false
     
     func startIfNeeded(reason: String) async -> String? {
@@ -47,7 +47,7 @@ actor ActivityCoordinator {
             }
         }
         
-        if current == nil, let existing = Activity<PETLLiveActivityExtensionAttributes>.activities.last {
+        if current == nil, let existing = Activity<PETLLiveActivityAttributes>.activities.last {
             current = existing
             print("ℹ️  Rehydrated existing Live Activity id:", existing.id)
             return existing.id
@@ -72,7 +72,7 @@ actor ActivityCoordinator {
             
             let initialState = await LiveActivityManager.shared.firstContent()
             current = try await Activity.request(
-                attributes: PETLLiveActivityExtensionAttributes(name: "PETL Charging Activity"),
+                attributes: PETLLiveActivityAttributes(name: "PETL Charging Activity"),
                 content: ActivityContent(state: initialState, staleDate: Date().addingTimeInterval(3600)),
                 pushType: .token
             )
@@ -104,7 +104,7 @@ actor ActivityCoordinator {
             do {
                 let fallbackState = await LiveActivityManager.shared.firstContent()
                 current = try await Activity.request(
-                    attributes: PETLLiveActivityExtensionAttributes(name: "PETL Charging Activity"),
+                    attributes: PETLLiveActivityAttributes(name: "PETL Charging Activity"),
                     content: ActivityContent(state: fallbackState, staleDate: Date().addingTimeInterval(3600)),
                     pushType: nil
                 )
@@ -163,13 +163,13 @@ final class LiveActivityManager {
     @MainActor private var isEnding = false
     
     // MARK: - Activity Registration
-    private func register(_ activity: Activity<PETLLiveActivityExtensionAttributes>, reason: String) {
+    private func register(_ activity: Activity<PETLLiveActivityAttributes>, reason: String) {
         currentActivityID = activity.id
         addToAppLogs("🧷 Track id=\(String(activity.id.suffix(4))) reason=\(reason)")
         attachObservers(activity)
     }
     
-    private func attachObservers(_ activity: Activity<PETLLiveActivityExtensionAttributes>) {
+    private func attachObservers(_ activity: Activity<PETLLiveActivityAttributes>) {
         Task.detached { [weak self] in
             for await state in activity.activityStateUpdates {
                 await MainActor.run {
@@ -236,7 +236,7 @@ final class LiveActivityManager {
             reattachIfNeeded()
         } else {
             // Startup recovery: if there's any system activity but currentActivityID == nil, call endAll
-            let systemActivities = Activity<PETLLiveActivityExtensionAttributes>.activities
+            let systemActivities = Activity<PETLLiveActivityAttributes>.activities
             if !systemActivities.isEmpty && currentActivityID == nil {
                 addToAppLogs("🔄 Startup recovery: \(systemActivities.count) system activities but no tracked ID")
                 Task { @MainActor in
@@ -258,7 +258,7 @@ final class LiveActivityManager {
     func reattachIfNeeded() {
         guard currentActivityID == nil else { return }
         // if exactly one PETL activity exists, adopt it; if many, pick the most recent
-        if let a = Activity<PETLLiveActivityExtensionAttributes>.activities.last {
+        if let a = Activity<PETLLiveActivityAttributes>.activities.last {
             currentActivityID = a.id
             BatteryTrackingManager.shared.addToAppLogsCritical("🧷 Reattached active id=\(String(a.id.suffix(4))) on launch")
         }
@@ -286,7 +286,7 @@ final class LiveActivityManager {
     private var recentStartAt: Date? = nil
     private var retryStartTask: Task<Void, Never>?
     private var forceNextPush = false
-    private var lastRichState: PETLLiveActivityExtensionAttributes.ContentState?
+    private var lastRichState: PETLLiveActivityAttributes.ContentState?
     
     private actor ActivityGate {
         var isRequesting = false
@@ -304,18 +304,18 @@ final class LiveActivityManager {
     
     // MARK: - Update Policy
     @MainActor
-    func updateLiveActivityWithPolicy(state: PETLLiveActivityExtensionAttributes.ContentState) {
+    func updateLiveActivityWithPolicy(state: PETLLiveActivityAttributes.ContentState) {
         let isForeground = UIApplication.shared.applicationState == .active
         
         if isForeground {
             Task {
-                for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+                for activity in Activity<PETLLiveActivityAttributes>.activities {
                     await activity.update(using: state)
                 }
                 addToAppLogs("🔄 Live Activity updated locally (foreground)")
             }
         } else {
-            for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+            for activity in Activity<PETLLiveActivityAttributes>.activities {
                 #if DEBUG
             OneSignalClient.shared.updateLiveActivityRemote(activityId: activity.id, state: state)
             #endif
@@ -330,13 +330,13 @@ final class LiveActivityManager {
         
         if isForeground {
             Task {
-                for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+                for activity in Activity<PETLLiveActivityAttributes>.activities {
                     await activity.end(dismissalPolicy: .immediate)
                 }
                 addToAppLogs("🛑 Live Activity ended locally (foreground)")
             }
         } else {
-            for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+            for activity in Activity<PETLLiveActivityAttributes>.activities {
                 #if DEBUG
             OneSignalClient.shared.endLiveActivityRemote(activityId: activity.id)
             #endif
@@ -468,7 +468,7 @@ final class LiveActivityManager {
         endWatchdogTimer?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            let activityCount = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+            let activityCount = Activity<PETLLiveActivityAttributes>.activities.count
             if self.hasLiveActivity && activityCount > 0 {
                 self.watchdogFires += 1
                 addToAppLogs("⏱️ End watchdog fired; \(activityCount) activity(ies) still present, enqueueing final end self-ping")
@@ -538,13 +538,13 @@ final class LiveActivityManager {
     
     // MARK: - Helpers
     private var hasSystemActive: Bool {
-        Activity<PETLLiveActivityExtensionAttributes>.activities.contains {
+        Activity<PETLLiveActivityAttributes>.activities.contains {
             $0.activityState == .active
         }
     }
     
     private var hasLiveActivity: Bool {
-        for act in Activity<PETLLiveActivityExtensionAttributes>.activities {
+        for act in Activity<PETLLiveActivityAttributes>.activities {
             switch act.activityState {
             case .active, .stale: return true
             default: continue
@@ -555,7 +555,7 @@ final class LiveActivityManager {
     
     @MainActor
     private func cleanupDuplicates(keepId: String?) {
-        let list = Activity<PETLLiveActivityExtensionAttributes>.activities
+        let list = Activity<PETLLiveActivityAttributes>.activities
         guard list.count > 1 else { return }
         addToAppLogs("🧹 Cleaning up duplicates: \(list.count)")
         for act in list {
@@ -601,7 +601,7 @@ final class LiveActivityManager {
             return
         }
 
-        let before = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+        let before = Activity<PETLLiveActivityAttributes>.activities.count
         addToAppLogs("🔍 System activities count before start: \(before)")
         if before > 0 {
             addToAppLogs("⏭️ Skip start — ALREADY-ACTIVE")
@@ -611,7 +611,7 @@ final class LiveActivityManager {
         let minutes = max(seededMinutes, ChargeStateStore.shared.currentETAMinutes ?? 0)
         addToAppLogs("⛽️ seed-\(minutes) sysPct=\(sysPct)")
 
-        let attrs = PETLLiveActivityExtensionAttributes(name: "PETL Charging Activity")
+        let attrs = PETLLiveActivityAttributes(name: "PETL Charging Activity")
         // Use SSOT mapper to build content state
         let snapshot = ChargingSnapshot(
             ts: Date(),
@@ -627,7 +627,7 @@ final class LiveActivityManager {
 
         // Try with push token first; if it fails, fallback to no-push.
         do {
-            let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(attributes: attrs, content: content, pushType: .token)
+            let activity = try Activity<PETLLiveActivityAttributes>.request(attributes: attrs, content: content, pushType: .token)
             BatteryTrackingManager.shared.addToAppLogsCritical("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=on)")
             register(activity, reason: reason.rawValue)
             observePushToken(activity) // safe logger capture below
@@ -644,7 +644,7 @@ final class LiveActivityManager {
 
             BatteryTrackingManager.shared.addToAppLogsCritical("⚠️ Push start failed (\(nsErr.localizedDescription)) — falling back to no-push")
             do {
-                let activity = try Activity<PETLLiveActivityExtensionAttributes>.request(attributes: attrs, content: content)
+                let activity = try Activity<PETLLiveActivityAttributes>.request(attributes: attrs, content: content)
                 BatteryTrackingManager.shared.addToAppLogsCritical("🎬 Started Live Activity id=\(String(activity.id.suffix(4))) reason=\(reason.rawValue) (push=off)")
                 register(activity, reason: reason.rawValue)
             } catch {
@@ -655,13 +655,13 @@ final class LiveActivityManager {
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 150_000_000)
-            let after = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+            let after = Activity<PETLLiveActivityAttributes>.activities.count
             BatteryTrackingManager.shared.addToAppLogsCritical("✅ post-request system count=\(after) tracked=\(String(currentActivityID?.suffix(4) ?? "nil"))")
         }
     }
 
     // Capture logger outside the Task to avoid actor mistakes.
-    private func observePushToken(_ activity: Activity<PETLLiveActivityExtensionAttributes>) {
+    private func observePushToken(_ activity: Activity<PETLLiveActivityAttributes>) {
         Task.detached {
             for await tokenData in activity.pushTokenUpdates {
                 let hex = tokenData.map { String(format: "%02x", $0) }.joined()
@@ -730,7 +730,7 @@ func startActivity(reason: LAStartReason) async {
         startsSucceeded += 1
         isActive = true
         lastStartAt = Date()  // Set for thrash guard
-        cleanupDuplicates(keepId: Activity<PETLLiveActivityExtensionAttributes>.activities.first?.id ?? "")
+        cleanupDuplicates(keepId: Activity<PETLLiveActivityAttributes>.activities.first?.id ?? "")
         dumpActivities("post-start")
         cancelEndWatchdog()
         recentStartAt = Date()
@@ -750,8 +750,8 @@ func startActivity(reason: LAStartReason) async {
     }
     
     @MainActor
-    private func pushToAll(_ state: PETLLiveActivityExtensionAttributes.ContentState) async {
-        for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+    private func pushToAll(_ state: PETLLiveActivityAttributes.ContentState) async {
+        for activity in Activity<PETLLiveActivityAttributes>.activities {
             await activity.update(using: state)
         }
         let message = "🔄 push level=\(Int(state.batteryLevel*100)) rate=\(state.chargingRate) time=\(state.timeToFullMinutes) min"
@@ -760,7 +760,7 @@ func startActivity(reason: LAStartReason) async {
     
     @MainActor
     func pushUpdate(reason: String) async {
-        guard !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty else {
+        guard !Activity<PETLLiveActivityAttributes>.activities.isEmpty else {
             addToAppLogs("📤 pushUpdate(\(reason)) - no activities to update")
             return
         }
@@ -779,7 +779,7 @@ func startActivity(reason: LAStartReason) async {
         
         let state = firstContent()
         await pushToAll(state)
-        addToAppLogs("📤 pushUpdate(\(reason)) - updated \(Activity<PETLLiveActivityExtensionAttributes>.activities.count) activities")
+        addToAppLogs("📤 pushUpdate(\(reason)) - updated \(Activity<PETLLiveActivityAttributes>.activities.count) activities")
     }
     
     private func updateAll(with dict: [String: Any]) {
@@ -817,7 +817,7 @@ func startActivity(reason: LAStartReason) async {
         defer { isEnding = false }
 
         if let id = currentActivityID,
-           let a = Activity<PETLLiveActivityExtensionAttributes>.activities.first(where: { $0.id == id }) {
+           let a = Activity<PETLLiveActivityAttributes>.activities.first(where: { $0.id == id }) {
             BatteryTrackingManager.shared.addToAppLogsCritical("🧪 endActive(\(reason)) id=\(String(id.suffix(4)))")
             do {
                 try await a.end(nil, dismissalPolicy: .immediate)
@@ -826,7 +826,7 @@ func startActivity(reason: LAStartReason) async {
                 BatteryTrackingManager.shared.addToAppLogsCritical("❌ end failed id=\(String(id.suffix(4))): \(error.localizedDescription)")
             }
             // clear pointer if gone
-            if Activity<PETLLiveActivityExtensionAttributes>.activities.first(where: { $0.id == id }) == nil {
+            if Activity<PETLLiveActivityAttributes>.activities.first(where: { $0.id == id }) == nil {
                 currentActivityID = nil
             }
         } else {
@@ -848,7 +848,7 @@ func startActivity(reason: LAStartReason) async {
             return
         }
         
-        let activities = Activity<PETLLiveActivityExtensionAttributes>.activities
+        let activities = Activity<PETLLiveActivityAttributes>.activities
         addToAppLogs("🧪 endAll(\(reason)) about to end \(activities.count) activity(ies)")
 
         for act in activities {
@@ -863,7 +863,7 @@ func startActivity(reason: LAStartReason) async {
         let backoff: [UInt64] = [1, 3, 7].map { UInt64($0) * 1_000_000_000 }
         for delay in backoff {
             try? await Task.sleep(nanoseconds: delay)
-            let remaining = Activity<PETLLiveActivityExtensionAttributes>.activities.count
+            let remaining = Activity<PETLLiveActivityAttributes>.activities.count
             addToAppLogs("🧪 endAll() verification: remaining=\(remaining)")
             if remaining == 0 { 
                 addToAppLogs("✅ endAll() successful - all activities ended")
@@ -872,7 +872,7 @@ func startActivity(reason: LAStartReason) async {
         }
 
         // Failsafe: if still present, push a final "not charging" update and stale it out
-        let finalActivities = Activity<PETLLiveActivityExtensionAttributes>.activities
+        let finalActivities = Activity<PETLLiveActivityAttributes>.activities
         if !finalActivities.isEmpty {
             addToAppLogs("⚠️ endAll() failsafe: \(finalActivities.count) activities still present, marking as stale")
             
@@ -919,7 +919,7 @@ func startActivity(reason: LAStartReason) async {
         
         dumpActivities("afterEnd")
         
-        addToAppLogs("🧪 post-end activities: \(Activity<PETLLiveActivityExtensionAttributes>.activities.map{ $0.id }.joined(separator: ","))")
+        addToAppLogs("🧪 post-end activities: \(Activity<PETLLiveActivityAttributes>.activities.map{ $0.id }.joined(separator: ","))")
     }
     
     private func cancelFailsafeTask() {
@@ -927,7 +927,7 @@ func startActivity(reason: LAStartReason) async {
     }
     
     // MARK: - Helper Methods
-    func firstContent() -> PETLLiveActivityExtensionAttributes.ContentState {
+    func firstContent() -> PETLLiveActivityAttributes.ContentState {
         // Use SSOT mapper to get content from current snapshot
         return SnapshotToLiveActivity.currentContent()
     }
@@ -937,7 +937,7 @@ func startActivity(reason: LAStartReason) async {
         let contentState = SnapshotToLiveActivity.currentContent()
         
         Task { @MainActor in
-            for activity in Activity<PETLLiveActivityExtensionAttributes>.activities {
+            for activity in Activity<PETLLiveActivityAttributes>.activities {
                 await activity.update(using: contentState)
             }
             os_log("✅ Live Activity updated with SSOT snapshot data")
@@ -1025,7 +1025,7 @@ func startActivity(reason: LAStartReason) async {
     
     // MARK: - Debug Helper
     func dumpActivities(_ tag: String) {
-        let list = Activity<PETLLiveActivityExtensionAttributes>.activities
+        let list = Activity<PETLLiveActivityAttributes>.activities
         print("💬 \(tag) — \(list.count) activities")
         list.forEach { print("   · \($0.id)  \(String(describing: $0.activityState))") }
     }

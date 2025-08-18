@@ -13,7 +13,7 @@ import SwiftUI
 
 struct PETLLiveActivityExtensionLiveActivity: Widget {
     var body: some WidgetConfiguration {
-        ActivityConfiguration(for: PETLLiveActivityExtensionAttributes.self) { context in
+        ActivityConfiguration(for: PETLLiveActivityAttributes.self) { context in
             // Fresh Live Activity Card following Apple HIG Guidelines
             VStack(spacing: 8) {
                 // Header with essential info

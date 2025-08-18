@@ -6,7 +6,7 @@ struct SnapshotToLiveActivity {
     
     /// Convert a ChargingSnapshot to Live Activity ContentState
     /// This is the ONLY way to build ContentState - ensures consistency
-    static func makeContent(from snapshot: ChargingSnapshot) -> PETLLiveActivityExtensionAttributes.ContentState {
+    static func makeContent(from snapshot: ChargingSnapshot) -> PETLLiveActivityAttributes.ContentState {
         let now = Date()
         
         // Format charging rate
@@ -43,7 +43,7 @@ struct SnapshotToLiveActivity {
         let snappedNow = Calendar.current.date(bySetting: .second, value: 0, of: base) ?? base
         let expectedFullDate = snappedNow.addingTimeInterval(TimeInterval(safeETAMinutes * 60))
         
-        return PETLLiveActivityExtensionAttributes.ContentState(
+        return PETLLiveActivityAttributes.ContentState(
             batteryLevel: snapshot.socPercent,
             isCharging: snapshot.state == .charging,
             chargingRate: chargingRate,
@@ -59,7 +59,7 @@ struct SnapshotToLiveActivity {
     
     /// Get the current content state from the central store
     @MainActor
-    static func currentContent() -> PETLLiveActivityExtensionAttributes.ContentState {
+    static func currentContent() -> PETLLiveActivityAttributes.ContentState {
         return makeContent(from: ChargeStateStore.shared.snapshot)
     }
 }

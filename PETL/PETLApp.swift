@@ -151,14 +151,22 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         appLogger.info("📱 OneSignal App ID: os_v2_app_5pcq6wylknefljglge5vaog4bqpztakc6b3u3zmjovaetx7lszdlq4hgpzjllbtrn3iwdjp75l46ids5faaj7im6iaqbxn5ubxhahja")
         
         // Initialize OneSignal with error handling
+        #if canImport(OneSignalFramework)
         OneSignal.initialize("os_v2_app_5pcq6wylknefljglge5vaog4bqpztakc6b3u3zmjovaetx7lszdlq4hgpzjllbtrn3iwdjp75l46ids5faaj7im6iaqbxn5ubxhahja", withLaunchOptions: launchOptions)
+        #elseif canImport(OneSignal)
+        OneSignal.initialize("os_v2_app_5pcq6wylknefljglge5vaog4bqpztakc6b3u3zmjovaetx7lszdlq4hgpzjllbtrn3iwdjp75l46ids5faaj7im6iaqbxn5ubxhahja", withLaunchOptions: launchOptions)
+        #endif
         addToAppLogs("✅ OneSignal initialized successfully")
         print("✅ OneSignal initialized successfully")
         appLogger.info("✅ OneSignal initialized successfully")
         
         // Setup OneSignal Live Activity
         #if canImport(OneSignalLiveActivities)
+        #if canImport(OneSignalFramework)
         OneSignal.LiveActivities.setup(PETLLiveActivityAttributes.self)
+        #elseif canImport(OneSignal)
+        OneSignal.LiveActivities.setup(PETLLiveActivityAttributes.self)
+        #endif
         #endif
         
         // Configure LiveActivityManager (single source of truth)
@@ -207,7 +215,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in
             // Check if we need to start a Live Activity
             let isCharging = ChargeStateStore.shared.isCharging
-            let hasActivities = !Activity<PETLLiveActivityExtensionAttributes>.activities.isEmpty
+            let hasActivities = !Activity<PETLLiveActivityAttributes>.activities.isEmpty
             
             if isCharging && !hasActivities {
                 // Start Live Activity if charging but no activity exists
@@ -324,7 +332,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             let newState = PETLLiveActivityAttributes.ContentState(
                 soc: max(0, soc),
                 watts: max(0.0, watts),
-                updatedAt: .now
+                updatedAt: Date()
             )
             for activity in Activity<PETLLiveActivityAttributes>.activities {
                 await activity.update(using: newState)
@@ -446,10 +454,10 @@ class BackgroundTaskScheduler {
 #if canImport(ActivityKit)
 @available(iOS 16.2, *)
 fileprivate func startLiveActivityTokenWatcher() {
-    Task.detached(priority: .background) {
+    Task.detached(priority: TaskPriority.background) {
         // 1) Pick up activities that already exist at launch
         for activity in Activity<PETLLiveActivityAttributes>.activities {
-            Task.detached(priority: .background) {
+            Task.detached(priority: TaskPriority.background) {
                 for await tokenData in activity.pushTokenUpdates {
                     let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()
                     print("🔑 LiveActivity APNs token=\(tokenHex)")
@@ -462,7 +470,7 @@ fileprivate func startLiveActivityTokenWatcher() {
                     #endif
                 }
             }
-            Task.detached(priority: .background) {
+            Task.detached(priority: TaskPriority.background) {
                 for await state in activity.activityStateUpdates {
                     if case .ended = state {
                         #if canImport(OneSignalFramework)
@@ -478,7 +486,7 @@ fileprivate func startLiveActivityTokenWatcher() {
         }
         // 2) Observe activities created after launch
         for await activity in Activity<PETLLiveActivityAttributes>.activityUpdates {
-            Task.detached(priority: .background) {
+            Task.detached(priority: TaskPriority.background) {
                 for await tokenData in activity.pushTokenUpdates {
                     let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined()
                     print("🔑 LiveActivity APNs token=\(tokenHex)")
@@ -491,7 +499,7 @@ fileprivate func startLiveActivityTokenWatcher() {
                     #endif
                 }
             }
-            Task.detached(priority: .background) {
+            Task.detached(priority: TaskPriority.background) {
                 for await state in activity.activityStateUpdates {
                     if case .ended = state {
                         #if canImport(OneSignalFramework)
