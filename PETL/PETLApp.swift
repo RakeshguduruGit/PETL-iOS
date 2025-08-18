@@ -105,8 +105,13 @@ struct PETLApp: App {
                         DispatchQueue.main.async {
                             _ = BatteryTrackingManager.shared.historyPointsFromDB(hours: 24) // warms up
                         }
+                        
+                        if ChargingSessionManager.shared.isChargingActive {
+                            PETLOrchestrator.shared.startForegroundLoop()
+                        }
                     } else if newPhase == .background {
-                        // Ask iOS for a new BG refresh window after we background
+                        // Stop FG loop and ask iOS for a new BG refresh window
+                        PETLOrchestrator.shared.stopForegroundLoop()
                         appDelegate.scheduleRefresh(in: 5)
                         appDelegate.debugDumpPendingBGRequests(context: "on background")
                     }
@@ -128,6 +133,27 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // Start centralized battery monitoring
         BatteryTrackingManager.shared.startMonitoring()
+        
+        // Start session manager and observe lifecycle
+        ChargingSessionManager.shared.start()
+        NotificationCenter.default.addObserver(forName: .petlSessionStarted, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                addToAppLogs("⚡️ Charging session STARTED")
+                LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"]) // idempotent start/update
+                if UIApplication.shared.applicationState == .active {
+                    PETLOrchestrator.shared.startForegroundLoop()
+                }
+                self?.scheduleRefresh(in: 5) // seed BG cadence
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .petlSessionEnded, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                addToAppLogs("🛑 Charging session ENDED — stopping loops & Live Activity")
+                PETLOrchestrator.shared.stopForegroundLoop()
+                self?.cancelRefresh()
+                await LiveActivityManager.shared.endAll("session-end")
+            }
+        }
         
         // Retry loop: handle `.unknown` window on first seconds after launch
         Task { @MainActor in
@@ -186,6 +212,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // Kick off the first BG refresh window; handleRefresh(task:) will reschedule itself.
         scheduleRefresh(in: 5) // use 30 if you want to be gentler
+        
+        // QA validation
+        if FeatureFlags.qaOrchestratorValidation {
+            PETLOrchestrator.shared.validateConfiguration()
+        }
         
         return true
     }
@@ -391,19 +422,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in
             addToAppLogs("🔧 BG refresh fired")
             
-            // Check if still charging - if not, end all activities
-            let isCharging = ChargeStateStore.shared.isCharging
-            if !isCharging {
-                addToAppLogs("🔌 BG refresh: not charging, ending activities")
-                await LiveActivityManager.shared.endAll("bg-not-charging")
-                cancelRefresh()
-                task.setTaskCompleted(success: true)
-                return
-            }
-            
-            // Re-sample + recompute from DB
-            BatteryTrackingManager.shared.emitSnapshotNow("bg-refresh")
-            await LiveActivityManager.shared.pushUpdate(reason: "bg-refresh")
+            await PETLOrchestrator.shared.backgroundRefreshTick(reason: "bg-refresh")
             task.setTaskCompleted(success: true)
         }
     }
@@ -532,3 +551,185 @@ fileprivate func startLiveActivityTokenWatcher() {
     }
 }
 #endif
+
+// MARK: - Charging Session Manager
+final class ChargingSessionManager {
+    static let shared = ChargingSessionManager()
+    enum State: String { case idle, probing, active, trickle, managedCharging, ending, ended }
+    private(set) var state: State = .idle
+    var hysteresisSeconds: TimeInterval = 8
+    private var probeTimer: Timer?
+    var isChargingActive: Bool { [.active, .trickle, .managedCharging].contains(state) }
+
+    @MainActor
+    func start() {
+        if !UIDevice.current.isBatteryMonitoringEnabled { UIDevice.current.isBatteryMonitoringEnabled = true }
+        NotificationCenter.default.addObserver(self, selector: #selector(onBatteryStateChanged), name: UIDevice.batteryStateDidChangeNotification, object: nil)
+        evaluate(initial: true)
+    }
+
+    @MainActor
+    @objc private func onBatteryStateChanged() { evaluate(initial: false) }
+
+    @MainActor
+    private func evaluate(initial: Bool) {
+        let s = UIDevice.current.batteryState
+        switch s {
+        case .charging, .full:
+            if state == .idle || state == .ended {
+                transition(to: .probing)
+                probeTimer?.invalidate()
+                probeTimer = Timer.scheduledTimer(withTimeInterval: hysteresisSeconds, repeats: false) { [weak self] _ in
+                    guard let self else { return }
+                    if UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full {
+                        self.transition(to: .active)
+                        NotificationCenter.default.post(name: .petlSessionStarted, object: nil)
+                    } else {
+                        self.transition(to: .idle)
+                    }
+                }
+            }
+        case .unplugged:
+            if isChargingActive || state == .probing {
+                transition(to: .ending)
+                NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
+                transition(to: .ended)
+            } else {
+                transition(to: .idle)
+            }
+        default:
+            if initial { transition(to: .idle) }
+        }
+    }
+
+    @MainActor
+    private func transition(to new: State) {
+        guard state != new else { return }
+        addToAppLogs("🔄 Session transition: \(state.rawValue) → \(new.rawValue)")
+        state = new
+    }
+}
+
+// MARK: - PETL Orchestrator
+final class PETLOrchestrator {
+    static let shared = PETLOrchestrator()
+    
+    // Configuration
+    var foregoundTickSeconds: TimeInterval = 60
+    var backgroundAcceptanceSeconds: TimeInterval = 300 // 5 minutes
+    var capacityWhEffective: Double = 12.0 // Default iPhone capacity
+    
+    // State
+    private var foregroundTimer: DispatchSourceTimer?
+    private var lastTickAt: Date = Date()
+    
+    // DB sinks (to be wired)
+    struct DBSinks {
+        var insertSoc: ((Int, Date) -> Void)?
+        var insertPower: ((Double, Date) -> Void)?
+        var recomputeAnalytics: (() -> Void)?
+    }
+    var dbSinks = DBSinks()
+    
+    @MainActor
+    func startForegroundLoop() {
+        guard foregroundTimer == nil else { return }
+        
+        foregroundTimer = DispatchSource.makeTimerSource(queue: .main)
+        foregroundTimer?.schedule(deadline: .now(), repeating: foregoundTickSeconds)
+        foregroundTimer?.setEventHandler { [weak self] in
+            Task { @MainActor in
+                await self?.tick(kind: .fg, reason: "foreground-timer")
+            }
+        }
+        foregroundTimer?.resume()
+        addToAppLogs("🔄 FG loop started (\(Int(foregoundTickSeconds))s)")
+    }
+    
+    @MainActor
+    func stopForegroundLoop() {
+        foregroundTimer?.cancel()
+        foregroundTimer = nil
+        addToAppLogs("🛑 FG loop stopped")
+    }
+    
+    @MainActor
+    func backgroundRefreshTick(reason: String) async {
+        await tick(kind: .bg, reason: reason)
+    }
+    
+    @MainActor
+    private func tick(kind: TickKind, reason: String) async {
+        let now = Date()
+        let dt = now.timeIntervalSince(lastTickAt)
+        lastTickAt = now
+        
+        guard ChargingSessionManager.shared.isChargingActive else {
+            addToAppLogs("⛔️ \(kind == .fg ? "FG" : "BG") tick suppressed — not charging")
+            lastTickAt = now
+            return
+        }
+        
+        // Measure: read battery level if available
+        let measuredSoc = Int(UIDevice.current.batteryLevel * 100)
+        
+        // Simulate: watts via SoC band + thermal factor (simplified)
+        let simWatts = simulateWatts(soc: measuredSoc)
+        let simSoc = measuredSoc // For now, use measured as simulated
+        
+        // Fan-out updates
+        let contentState = PETLLiveActivityAttributes.ContentState(
+            soc: simSoc,
+            watts: simWatts,
+            updatedAt: now,
+            isCharging: true,
+            timeToFullMinutes: 0, // TODO: calculate from ETA
+            expectedFullDate: Date().addingTimeInterval(3600), // TODO: calculate
+            chargingRate: "\(Int(simWatts))W",
+            batteryLevel: simSoc,
+            estimatedWattage: "\(Int(simWatts))W"
+        )
+        
+        // Update Live Activity
+        for activity in Activity<PETLLiveActivityAttributes>.activities {
+            await activity.update(using: contentState)
+        }
+        
+        // Post notification for UI refresh
+        NotificationCenter.default.post(name: .petlOrchestratorTick, object: nil, userInfo: [
+            "soc": simSoc,
+            "watts": simWatts,
+            "trickle": simWatts < 10.0
+        ])
+        
+        // App log
+        addToAppLogs("🧮 \(kind == .fg ? "FG" : "BG") tick — soc=\(simSoc)% watts=\(Int(simWatts))W\(simWatts < 10.0 ? " (trickle)" : "")")
+        
+        // DB sinks (if wired)
+        dbSinks.insertSoc?(simSoc, now)
+        dbSinks.insertPower?(simWatts, now)
+        dbSinks.recomputeAnalytics?()
+    }
+    
+    private func simulateWatts(soc: Int) -> Double {
+        // Simplified simulation - in reality this would be more sophisticated
+        if soc >= 80 { return 5.0 } // trickle
+        if soc >= 50 { return 15.0 } // normal
+        return 20.0 // fast
+    }
+    
+    @MainActor
+    func validateConfiguration() {
+        addToAppLogs("🧪 QA: Orchestrator cfg — FG=\(Int(foregoundTickSeconds))s BGWindow=\(Int(backgroundAcceptanceSeconds))s capWh=\(capacityWhEffective) useSim=true")
+        addToAppLogs("🧪 QA: DB sinks — soc=\(dbSinks.insertSoc != nil) power=\(dbSinks.insertPower != nil) analytics=\(dbSinks.recomputeAnalytics != nil)")
+        addToAppLogs("🧪 QA: Battery monitoring=\(UIDevice.current.isBatteryMonitoringEnabled)")
+    }
+    
+    enum TickKind { case fg, bg }
+}
+
+extension Notification.Name {
+    static let petlSessionStarted = Notification.Name("petl.session.started")
+    static let petlSessionEnded   = Notification.Name("petl.session.ended")
+    static let petlOrchestratorTick = Notification.Name("petl.orchestrator.tick")
+}

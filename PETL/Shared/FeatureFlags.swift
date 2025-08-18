@@ -17,4 +17,7 @@ enum FeatureFlags {
     
     /// Phase 3.0: ETA quarantine with spike detection and slew limiting
     static let etaQuarantineP3 = true
+    
+    /// When true, run orchestrator QA validation at launch and log configuration
+    static let qaOrchestratorValidation = true
 }
