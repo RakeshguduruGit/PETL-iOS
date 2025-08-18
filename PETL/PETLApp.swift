@@ -18,7 +18,7 @@ import OneSignal            // legacy Pods
 #endif
 
 
-import os.log
+import OSLog
 import BackgroundTasks
 
 // Create a logger for on-device logging
