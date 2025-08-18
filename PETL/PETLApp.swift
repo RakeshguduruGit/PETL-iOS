@@ -107,7 +107,8 @@ struct PETLApp: App {
                         }
                     } else if newPhase == .background {
                         // Ask iOS for a new BG refresh window after we background
-                        appDelegate.scheduleRefresh(in: 15)
+                        appDelegate.scheduleRefresh(in: 5)
+                        appDelegate.debugDumpPendingBGRequests(context: "on background")
                     }
                 }
         }
@@ -184,7 +185,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         registerBackgroundTasks()
         
         // Kick off the first BG refresh window; handleRefresh(task:) will reschedule itself.
-        scheduleRefresh(in: 15) // use 30 if you want to be gentler
+        scheduleRefresh(in: 5) // use 30 if you want to be gentler
         
         return true
     }
@@ -351,12 +352,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
     }
     
-    func scheduleRefresh(in minutes: Int = 15) {
+    func scheduleRefresh(in minutes: Int = 5) {
         let req = BGAppRefreshTaskRequest(identifier: refreshId)
         req.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
         do { 
             try BGTaskScheduler.shared.submit(req)
             Task { @MainActor in addToAppLogs("✅ BG refresh scheduled for \(minutes) minutes") }
+            self.debugDumpPendingBGRequests(context: "after scheduleRefresh")
         } catch { 
             Task { @MainActor in addToAppLogs("⚠️ BG submit failed: \(error)") }
         }
@@ -367,8 +369,20 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in addToAppLogs("🛑 BG refresh cancelled") }
     }
     
+    func debugDumpPendingBGRequests(context: String) {
+        BGTaskScheduler.shared.getPendingTaskRequests { reqs in
+            Task { @MainActor in
+                addToAppLogs("🧾 Pending BG requests (\(context)): \(reqs.count)")
+                for r in reqs {
+                    let when = r.earliestBeginDate?.description ?? "nil"
+                    addToAppLogs(" • id=\(r.identifier) earliest=\(when)")
+                }
+            }
+        }
+    }
+    
     func handleRefresh(task: BGAppRefreshTask) {
-        scheduleRefresh(in: 30) // schedule the next one
+        scheduleRefresh(in: 5) // schedule the next one
 
         task.expirationHandler = {
             Task { @MainActor in addToAppLogs("⏳ BG refresh expired") }
@@ -439,12 +453,12 @@ class BackgroundTaskScheduler {
     
     func scheduleBackgroundTask() {
         let request = BGAppRefreshTaskRequest(identifier: backgroundTaskIdentifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 5 * 60) // 5 minutes
         
         do {
             try BGTaskScheduler.shared.submit(request)
-            print("✅ Background task scheduled for 15 minutes")
-            appLogger.info("✅ Background task scheduled for 15 minutes")
+            print("✅ Background task scheduled for 5 minutes")
+            appLogger.info("✅ Background task scheduled for 5 minutes")
         } catch {
             print("❌ Failed to schedule background task: \(error)")
             appLogger.error("❌ Failed to schedule background task: \(error)")
