@@ -220,16 +220,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // Wire orchestrator DB sinks to real ChargeDB APIs
         PETLOrchestrator.shared.dbSinks.insertSoc = { pct, ts in
-            _ = ChargeDB.shared.insertSimulatedSoc(percent: pct, at: ts, quality: "simulated")
-            addToAppLogs("🪵 DB.soc ← \(pct)% @\(ts) [simulated]")
+            _ = ChargeDB.shared.insertSimulatedSoc(percent: pct, at: ts, quality: "present")
+            addToAppLogs("🪵 DB.soc ← \(pct)% @\(ts) [present]")
         }
         PETLOrchestrator.shared.dbSinks.insertPower = { watts, ts in
-            _ = ChargeDB.shared.insertSimulatedPower(watts: watts, at: ts, trickle: watts < 10.0, quality: "simulated")
-            addToAppLogs(String(format: "🪵 DB.power ← %.1fW @%@ [simulated]", watts, ts as CVarArg))
+            _ = ChargeDB.shared.insertSimulatedPower(watts: watts, at: ts, trickle: watts < 10.0, quality: "present")
+            addToAppLogs(String(format: "🪵 DB.power ← %.1fW @%@ [present]", watts, ts as CVarArg))
         }
         PETLOrchestrator.shared.dbSinks.recomputeAnalytics = {
-            // Note: ChargingAnalyticsStore doesn't have a public recompute method
-            // The analytics are computed automatically via ChargeEstimator.estimateSubject
             addToAppLogs("🧮 DB.analytics.recompute(10m) requested")
         }
         
@@ -260,18 +258,18 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Handle background app refresh
         print("🔄 Background App Refresh triggered")
         appLogger.info("🔄 Background App Refresh triggered")
-        
+
         Task { @MainActor in
-            // Check if we need to start a Live Activity
+            // Always tick once during BG fetch so charts/DB stay current
+            await PETLOrchestrator.shared.backgroundRefreshTick(reason: "bg-fetch")
+
             let isCharging = ChargeStateStore.shared.isCharging
             let hasActivities = !Activity<PETLLiveActivityAttributes>.activities.isEmpty
-            
+
             if isCharging && !hasActivities {
-                // Start Live Activity if charging but no activity exists
                 LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"])
                 completionHandler(.newData)
             } else if !isCharging && hasActivities {
-                // End Live Activity if not charging but activity exists
                 LiveActivityManager.shared.handleRemotePayload(["batteryState": "unplugged"])
                 completionHandler(.newData)
             } else {
@@ -378,6 +376,16 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         appLogger.info("📩 Silent push — soc=\(soc) watts=\(watts)")
 
         Task {
+            // If device is not charging, end activities and log, then stop.
+            if !ChargeStateStore.shared.isCharging {
+                addToAppLogs("🧯 Silent push while unplugged — ending Live Activity")
+                await LiveActivityManager.shared.endAll("server-push-unplugged")
+                BatteryTrackingManager.shared.recordBackgroundLog(soc: soc, watts: watts)
+                completionHandler(.noData)
+                return
+            }
+
+            // Update Live Activity from server state
             let newState = PETLLiveActivityAttributes.ContentState(
                 soc: max(0, soc),
                 watts: max(0.0, watts),
@@ -386,6 +394,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             for activity in Activity<PETLLiveActivityAttributes>.activities {
                 await activity.update(using: newState)
             }
+
+            // Seed orchestrator so local countdown between pushes stays accurate
+            await PETLOrchestrator.shared.seedFromServer(soc: soc, watts: watts)
+
             BatteryTrackingManager.shared.recordBackgroundLog(soc: soc, watts: watts)
             completionHandler(.newData)
         }
@@ -457,30 +469,27 @@ class BackgroundTaskScheduler {
     private func handleBackgroundTask(_ task: BGAppRefreshTask) {
         // Schedule the next background task
         scheduleBackgroundTask()
-        
+
         // Set up task expiration
         task.expirationHandler = {
             task.setTaskCompleted(success: false)
         }
-        
+
         Task { @MainActor in
-            // Check if we need to start/end Live Activity
+            // Ensure one orchestrator tick per BG wake so DB & charts advance
+            await PETLOrchestrator.shared.backgroundRefreshTick(reason: "bg-scheduler")
+
             let isCharging = ChargeStateStore.shared.isCharging
             let hasActivities = !Activity<PETLLiveActivityAttributes>.activities.isEmpty
-            
+
             if isCharging && !hasActivities {
-                // Start Live Activity if charging but no activity exists
                 LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"])
-                task.setTaskCompleted(success: true)
             } else if !isCharging && hasActivities {
-                // End Live Activity if not charging but activity exists
                 LiveActivityManager.shared.handleRemotePayload(["batteryState": "unplugged"])
-                task.setTaskCompleted(success: true)
-            } else {
-                task.setTaskCompleted(success: false)
             }
+            task.setTaskCompleted(success: true)
         }
-        
+
         // NEW: enforce retention during BG refresh
         ChargeDB.shared.trim(olderThanDays: 30)
     }
@@ -631,8 +640,17 @@ final class PETLOrchestrator {
     
     // Configuration
     var foregoundTickSeconds: TimeInterval = 60
-    var backgroundAcceptanceSeconds: TimeInterval = 300 // 5 minutes
+    var backgroundAcceptanceSeconds: TimeInterval = 90 // faster BG adoption for server-driven model
     var capacityWhEffective: Double = 12.0 // Default iPhone capacity
+    @MainActor
+    func seedFromServer(soc: Int, watts: Double) async {
+        let clamped = max(0, min(100, soc))
+        socSim = Double(clamped)
+        hasInitializedFromMeasured = true
+        lastTickAt = Date() // reset integration window
+        addToAppLogs("🪄 Seeded from server — soc=\(clamped)% watts=\(String(format: "%.1f", watts))")
+    }
+
 
     // Simulation state & reliability gate
     private var socSim: Double = 0.0
@@ -816,6 +834,10 @@ final class PETLOrchestrator {
 
     // Accept a new 5% boundary only after 2 confirmations spaced in time
     private func acceptIfReliable(newValue: Int, kind: TickKind, now: Date) -> Bool {
+        if kind == .bg {
+            reliabilityCandidate = nil
+            return true
+        }
         // snap to nearest 5% boundary to avoid 1-2% noise
         let snapped = max(0, min(100, (newValue / 5) * 5))
         if let c = reliabilityCandidate, c.value == snapped {
