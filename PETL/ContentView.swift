@@ -100,6 +100,7 @@ struct ContentView: View {
     @ObservedObject private var tracker = BatteryTrackingManager.shared
     @StateObject private var analytics = ChargingAnalyticsStore()
     @ObservedObject private var chargeStateStore = ChargeStateStore.shared
+    @StateObject private var eta = ETAPresenter()
     @State private var snapshot = BatterySnapshot(level: 0, isCharging: false, timestamp: .now)
     @State private var isActivityRunning: Bool = false
     @State private var currentActivityId: String = ""
@@ -800,7 +801,7 @@ struct ContentView: View {
             "isCharging": tracker.isCharging,
             "chargingRate": analytics.characteristicLabel,
             "estimatedWattage": analytics.characteristicWatts,
-            "timeToFull": chargeStateStore.currentETAMinutes.map { "\($0)" } ?? "—",
+            "timeToFull": eta.unifiedEtaMinutes.map { "\($0)" } ?? "—",
             "deviceModel": deviceModel,
             "batteryHealth": batteryHealth,
             "isInWarmUpPeriod": isInWarmUpPeriod
@@ -841,6 +842,7 @@ struct TabButton: View {
 struct HomeNavigationContent: View {
     @ObservedObject private var tracker = BatteryTrackingManager.shared
     @ObservedObject private var chargeStateStore = ChargeStateStore.shared
+    @StateObject private var eta = ETAPresenter()
     @ObservedObject var analytics: ChargingAnalyticsStore
     let deviceModel: String
     let batteryCapacity: String
@@ -936,11 +938,8 @@ struct HomeNavigationContent: View {
                             
                             // Middle line content - follows PETL spec
                             if chargeStateStore.isCharging {
-                                // Use SSOT ETA from snapshot
-                                let shownETA = chargeStateStore.currentETAMinutes
-                                
-                                // Handle special cases
-                                if let minutes = shownETA {
+                                // Use unified ETA from ETAPresenter
+                                if let minutes = eta.unifiedEtaMinutes {
                                     if minutes == 0 {
                                         Text("Full")
                                             .font(.system(size: 57, weight: .regular))
@@ -1153,7 +1152,7 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(chargeStateStore.isCharging ? (chargeStateStore.currentETAMinutes.map { "\($0) min" } ?? "—") : "...")
+                                Text(chargeStateStore.isCharging ? eta.etaText : "...")
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
