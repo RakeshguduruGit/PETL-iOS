@@ -757,28 +757,32 @@ final class PETLOrchestrator {
         }
         let trickle = watts < 10.0
 
-        // 4) Compute ETA based on current rate (smoothed by 10-min window in analytics if wired)
+        // 4) Compute ETA based on current rate (floor to 1 minute to avoid rounding-to-zero flips)
         let ratePctPerMin = (watts / max(0.1, capacityWhEffective)) * (100.0 / 60.0)
         let remPct = max(0.0, 100.0 - socSim)
-        let etaMinutes = ratePctPerMin > 0 ? remPct / ratePctPerMin : 0
+        let rawEta = ratePctPerMin > 0 ? remPct / ratePctPerMin : .infinity
+        let etaMinutes = max(1.0, rawEta)  // <- floor at 1 minute
 
-        // Stop-linger: if unplug/full or ETA<=0, end session and stop updates
-        if !isCharging || socSim >= 100.0 || etaMinutes <= 0.0 {
+        // Only end if unplugged or actually full (not on momentary ETA=0)
+        // Only end from FG ticks to avoid BG thrash on momentary stalls
+        if kind == .fg, (!isCharging || socSim >= 100.0) {
             addToAppLogs("🏁 Session completed or not charging — ending activity")
             NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
             // Best-effort: also end live activities immediately
-            await LiveActivityManager.shared.endAll("eta-0-or-unplug")
+            await LiveActivityManager.shared.endAll("session-end")
             return
         }
 
         // 5) Fan-out to Live Activity and UI
+        // Clamp ETA for UI sanity (mirror ETAPresenter clamping)
+        let clampedETA = Int(min(max(etaMinutes.rounded(), 1), 240))
         let contentState = PETLLiveActivityAttributes.ContentState(
             soc: Int(round(socSim)),
             watts: watts,
             updatedAt: now,
             isCharging: true,
-            timeToFullMinutes: Int(etaMinutes.rounded()),
-            expectedFullDate: now.addingTimeInterval(etaMinutes * 60.0),
+            timeToFullMinutes: clampedETA,
+            expectedFullDate: now.addingTimeInterval(Double(clampedETA) * 60.0),
             chargingRate: String(format: "%.1fW", watts),
             batteryLevel: Int(round(socSim)),
             estimatedWattage: String(format: "%.1fW", watts)
@@ -801,7 +805,7 @@ final class PETLOrchestrator {
             "watts": watts,
             "trickle": trickle,
             "kind": (kind == .fg ? "fg" : "bg"),
-            "etaMin": Int(etaMinutes.rounded()),
+            "etaMin": clampedETA,
             "quality": quality,
             "etaSource": "sim",
             "ts": now
