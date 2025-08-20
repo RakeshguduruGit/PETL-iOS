@@ -415,7 +415,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         req.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
         do { 
             try BGTaskScheduler.shared.submit(req)
-            Task { @MainActor in addToAppLogs("✅ BG refresh scheduled for \(minutes) minutes") }
+            let when = req.earliestBeginDate?.formatted() ?? "nil"
+            Task { @MainActor in 
+                addToAppLogs("✅ BG refresh scheduled for \(minutes) minutes")
+                addToAppLogs("🗓️ BG refresh submit ok — earliest=\(when)")
+            }
             self.debugDumpPendingBGRequests(context: "after scheduleRefresh")
         } catch { 
             Task { @MainActor in addToAppLogs("⚠️ BG submit failed: \(error)") }
@@ -500,8 +504,10 @@ class BackgroundTaskScheduler {
         
         do {
             try BGTaskScheduler.shared.submit(request)
+            let when = request.earliestBeginDate?.formatted() ?? "nil"
             print("✅ Background task scheduled for 5 minutes")
             appLogger.info("✅ Background task scheduled for 5 minutes")
+            appLogger.info("🗓️ BG task submit ok — earliest=\(when)")
         } catch {
             print("❌ Failed to schedule background task: \(error)")
             appLogger.error("❌ Failed to schedule background task: \(error)")
@@ -787,6 +793,11 @@ final class PETLOrchestrator {
             batteryLevel: Int(round(socSim)),
             estimatedWattage: String(format: "%.1fW", watts)
         )
+        
+        // Diff guard between Live Activity and UI
+        if contentState.timeToFullMinutes != clampedETA {
+            addToAppLogs("⚠️ ETA mismatch LA=\(contentState.timeToFullMinutes) tick=\(clampedETA)")
+        }
 
         for activity in Activity<PETLLiveActivityAttributes>.activities {
             await activity.update(using: contentState)
