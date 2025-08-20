@@ -187,6 +187,7 @@ struct ContentView: View {
                 // Content area
                 TabView(selection: $selectedTab) {
                     HomeNavigationContent(
+                        eta: eta,
                         analytics: analytics,
                         deviceModel: deviceModel,
                         batteryCapacity: batteryCapacity,
@@ -842,7 +843,7 @@ struct TabButton: View {
 struct HomeNavigationContent: View {
     @ObservedObject private var tracker = BatteryTrackingManager.shared
     @ObservedObject private var chargeStateStore = ChargeStateStore.shared
-    @StateObject private var eta = ETAPresenter()
+    @ObservedObject var eta: ETAPresenter
     @ObservedObject var analytics: ChargingAnalyticsStore
     let deviceModel: String
     let batteryCapacity: String
