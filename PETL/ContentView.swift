@@ -658,7 +658,7 @@ struct ContentView: View {
     
     private func checkActivityStatus() {
         // Check if there's an active Live Activity
-        let activities = Activity<PETLLiveActivityExtensionAttributes>.activities
+        let activities = Activity<PETLLiveActivityAttributes>.activities
         print("🔍 Checking Live Activity status...")
         print("📊 Found \(activities.count) active Live Activities")
         
