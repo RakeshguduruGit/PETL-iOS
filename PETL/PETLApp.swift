@@ -220,10 +220,12 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // Wire orchestrator DB sinks to real ChargeDB APIs
         PETLOrchestrator.shared.dbSinks.insertSoc = { pct, ts in
+            guard pct > 0 else { return } // avoid bogus zero spikes
             _ = ChargeDB.shared.insertSimulatedSoc(percent: pct, at: ts, quality: "present")
             addToAppLogs("🪵 DB.soc ← \(pct)% @\(ts) [present]")
         }
         PETLOrchestrator.shared.dbSinks.insertPower = { watts, ts in
+            guard watts > 0 else { return } // ignore non-charging zeros
             _ = ChargeDB.shared.insertSimulatedPower(watts: watts, at: ts, trickle: watts < 10.0, quality: "present")
             addToAppLogs(String(format: "🪵 DB.power ← %.1fW @%@ [present]", watts, ts as CVarArg))
         }
@@ -645,8 +647,15 @@ final class PETLOrchestrator {
     static let shared = PETLOrchestrator()
     
     // Configuration
-    var foregoundTickSeconds: TimeInterval = 60
+    /// Foreground UI cadence for smooth charts/ETA
+    var uiTickSeconds: TimeInterval = 1
+    /// Minimum interval between Live Activity + .petlOrchestratorTick fan-outs
+    var minFanoutInterval: TimeInterval = 15
+    /// Minimum interval between DB inserts while in foreground
+    var minDBInterval: TimeInterval = 60
+    /// Background acceptance window (unchanged)
     var backgroundAcceptanceSeconds: TimeInterval = 90 // faster BG adoption for server-driven model
+    /// Effective device capacity (Wh) used for ETA math
     var capacityWhEffective: Double = 12.0 // Default iPhone capacity
     @MainActor
     func seedFromServer(soc: Int, watts: Double) async {
@@ -666,6 +675,8 @@ final class PETLOrchestrator {
     // State
     private var foregroundTimer: DispatchSourceTimer?
     private var lastTickAt: Date = .distantPast
+    private var lastFanoutAt: Date = .distantPast
+    private var lastDBAt: Date = .distantPast
     
     // DB sinks (to be wired)
     struct DBSinks {
@@ -685,14 +696,14 @@ final class PETLOrchestrator {
             hasInitializedFromMeasured = true
         }
         foregroundTimer = DispatchSource.makeTimerSource(queue: .main)
-        foregroundTimer?.schedule(deadline: .now(), repeating: foregoundTickSeconds)
+        foregroundTimer?.schedule(deadline: .now(), repeating: uiTickSeconds)
         foregroundTimer?.setEventHandler { [weak self] in
             Task { @MainActor in
-                await self?.tick(kind: .fg, reason: "foreground-timer")
+                await self?.tick(kind: .fg, reason: "foreground-ui")
             }
         }
         foregroundTimer?.resume()
-        addToAppLogs("🔄 FG loop started (\(Int(foregoundTickSeconds))s)")
+        addToAppLogs("🔄 FG loop started (\(Int(uiTickSeconds))s UI cadence)")
     }
     
     @MainActor
@@ -717,13 +728,16 @@ final class PETLOrchestrator {
     @MainActor
     private func tick(kind: TickKind, reason: String) async {
         let now = Date()
-        let defaultDT: TimeInterval = (kind == .fg) ? foregoundTickSeconds : backgroundAcceptanceSeconds
-        let dt = max(1.0, lastTickAt == .distantPast ? defaultDT : now.timeIntervalSince(lastTickAt))
+        let defaultDT: TimeInterval = (kind == .fg) ? uiTickSeconds : backgroundAcceptanceSeconds
+        let dt = max(uiTickSeconds, lastTickAt == .distantPast ? defaultDT : now.timeIntervalSince(lastTickAt))
         lastTickAt = now
 
         // Gate: only work while charging
         guard ChargingSessionManager.shared.isChargingActive else {
             addToAppLogs("⛔️ \(kind == .fg ? "FG" : "BG") tick suppressed — not charging")
+            if !Activity<PETLLiveActivityAttributes>.activities.isEmpty {
+                await LiveActivityManager.shared.endAll("enforce-unplug")
+            }
             return
         }
 
@@ -769,6 +783,23 @@ final class PETLOrchestrator {
         let rawEta = ratePctPerMin > 0 ? remPct / ratePctPerMin : .infinity
         let etaMinutes = max(1.0, rawEta)  // <- floor at 1 minute
 
+        // Emit a lightweight UI frame every tick for smooth charts (no LA/DB here)
+        NotificationCenter.default.post(name: .petlOrchestratorUiFrame, object: nil, userInfo: [
+            "soc": Int(round(socSim)),
+            "watts": watts,
+            "etaMinApprox": Int(min(max(etaMinutes.rounded(), 1), 240)),
+            "ts": now
+        ])
+
+        // BG end-guard so LA doesn't count up after done
+        let precheckETA = Int(min(max(etaMinutes.rounded(), 1), 240))
+        if kind == .bg, (!isCharging || socSim >= 100.0 || precheckETA <= 1) {
+            addToAppLogs("🏁 BG: session complete/unplug — ending activity")
+            NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
+            await LiveActivityManager.shared.endAll("bg-session-end")
+            return
+        }
+
         // Only end if unplugged or actually full (not on momentary ETA=0)
         // Only end from FG ticks to avoid BG thrash on momentary stalls
         if kind == .fg, (!isCharging || socSim >= 100.0) {
@@ -779,72 +810,60 @@ final class PETLOrchestrator {
             return
         }
 
-        // 5) Fan-out to Live Activity and UI
-        // Clamp ETA for UI sanity (mirror ETAPresenter clamping)
+        // 5) Fan-out to Live Activity and UI (rate-limited in FG to avoid spam)
         let clampedETA = Int(min(max(etaMinutes.rounded(), 1), 240))
-        let contentState = PETLLiveActivityAttributes.ContentState(
-            soc: Int(round(socSim)),
-            watts: watts,
-            updatedAt: now,
-            isCharging: true,
-            timeToFullMinutes: clampedETA,
-            expectedFullDate: now.addingTimeInterval(Double(clampedETA) * 60.0),
-            chargingRate: String(format: "%.1fW", watts),
-            batteryLevel: Int(round(socSim)),
-            estimatedWattage: String(format: "%.1fW", watts)
-        )
-        
-        // Diff guard between Live Activity and UI
-        if contentState.timeToFullMinutes != clampedETA {
-            addToAppLogs("⚠️ ETA mismatch LA=\(contentState.timeToFullMinutes) tick=\(clampedETA)")
+        let shouldFanoutNow: Bool = (kind == .bg) || now.timeIntervalSince(lastFanoutAt) >= minFanoutInterval
+        if shouldFanoutNow {
+            lastFanoutAt = now
+            let contentState = PETLLiveActivityAttributes.ContentState(
+                soc: Int(round(socSim)),
+                watts: watts,
+                updatedAt: now,
+                isCharging: true,
+                timeToFullMinutes: clampedETA,
+                expectedFullDate: now.addingTimeInterval(Double(clampedETA) * 60.0),
+                chargingRate: String(format: "%.1fW", watts),
+                batteryLevel: Int(round(socSim)),
+                estimatedWattage: String(format: "%.1fW", watts)
+            )
+            if contentState.timeToFullMinutes != clampedETA {
+                addToAppLogs("⚠️ ETA mismatch LA=\(contentState.timeToFullMinutes) tick=\(clampedETA)")
+            }
+            for activity in Activity<PETLLiveActivityAttributes>.activities {
+                await activity.update(using: contentState)
+            }
+            await LiveActivityManager.shared.handleRemotePayload([
+                "simSoc": Int(round(socSim)),
+                "simWatts": watts,
+                "trickle": trickle,
+                "quality": quality,
+                "reason": reason
+            ])
+            NotificationCenter.default.post(name: .petlOrchestratorTick, object: nil, userInfo: [
+                "soc": Int(round(socSim)),
+                "watts": watts,
+                "trickle": trickle,
+                "kind": (kind == .fg ? "fg" : "bg"),
+                "etaMin": clampedETA,
+                "quality": quality,
+                "etaSource": "sim",
+                "ts": now
+            ])
+            addToAppLogs("📤 Fan-out \(kind == .fg ? "FG" : "BG") — LA/UI updated, ETA=\(clampedETA)m")
         }
 
-        for activity in Activity<PETLLiveActivityAttributes>.activities {
-            await activity.update(using: contentState)
-        }
-        // Also route a lightweight payload for consumers that look at payload keys (idempotent)
-        await LiveActivityManager.shared.handleRemotePayload([
-            "simSoc": Int(round(socSim)),
-            "simWatts": watts,
-            "trickle": trickle,
-            "quality": quality,
-            "reason": reason
-        ])
-
-        NotificationCenter.default.post(name: .petlOrchestratorTick, object: nil, userInfo: [
-            "soc": Int(round(socSim)),
-            "watts": watts,
-            "trickle": trickle,
-            "kind": (kind == .fg ? "fg" : "bg"),
-            "etaMin": clampedETA,
-            "quality": quality,
-            "etaSource": "sim",
-            "ts": now
-        ])
-
-        // Post specific simulated sample notifications for DB consumers
-        NotificationCenter.default.post(name: .petlSimulatedSocSample, object: nil, userInfo: [
-            "soc": Int(round(socSim)),
-            "quality": quality,
-            "ts": now
-        ])
-        
-        NotificationCenter.default.post(name: .petlSimulatedPowerSample, object: nil, userInfo: [
-            "watts": watts,
-            "trickle": trickle,
-            "quality": quality,
-            "ts": now
-        ])
-
-        addToAppLogs("🧮 \(kind == .fg ? "FG" : "BG") tick — soc=\(Int(round(socSim)))% watts=\(String(format: "%.1f", watts))\(trickle ? " (trickle)" : "") ETA=\(Int(etaMinutes.rounded()))m [\(quality)] {src=sim}")
-        addToAppLogs("📤 LiveActivity update requested — soc=\(Int(round(socSim))) watts=\(String(format: "%.1f", watts)) kind=\(kind == .fg ? "fg" : "bg")")
-
-        // 6) Optional DB sinks
-        if hasInitializedFromMeasured {
-            dbSinks.insertSoc?(Int(round(socSim)), now)
-            dbSinks.insertPower?(watts, now)
+        // 6) Optional DB sinks (rate-limited in FG; avoid inserting bogus zero points)
+        let shouldWriteDBNow: Bool = (kind == .bg) || now.timeIntervalSince(lastDBAt) >= minDBInterval
+        if hasInitializedFromMeasured && shouldWriteDBNow {
+            lastDBAt = now
+            if Int(round(socSim)) > 0 { dbSinks.insertSoc?(Int(round(socSim)), now) }
+            if watts > 0 { dbSinks.insertPower?(watts, now) }
             dbSinks.recomputeAnalytics?()
+            addToAppLogs("💾 DB write — soc/power @\(now)")
         }
+
+        // Diagnostic log each tick (lightweight)
+        addToAppLogs("🧮 \(kind == .fg ? "FG" : "BG") tick — soc=\(Int(round(socSim)))% watts=\(String(format: "%.1f", watts))\(trickle ? " (trickle)" : "") ETA=\(Int(etaMinutes.rounded()))m [\(quality)] {src=sim}")
     }
 
     // Accept a new 5% boundary only after 2 confirmations spaced in time
@@ -857,7 +876,7 @@ final class PETLOrchestrator {
         let snapped = max(0, min(100, (newValue / 5) * 5))
         if let c = reliabilityCandidate, c.value == snapped {
             let count = c.count + 1
-            let minGap = (kind == .fg) ? max(90.0, foregoundTickSeconds * 1.5) : backgroundAcceptanceSeconds
+            let minGap = (kind == .fg) ? max(90.0, uiTickSeconds * 1.5) : backgroundAcceptanceSeconds
             if now.timeIntervalSince(c.firstSeen) >= minGap && count >= 2 {
                 reliabilityCandidate = nil
                 return true
@@ -895,7 +914,7 @@ final class PETLOrchestrator {
     
     @MainActor
     func validateConfiguration() {
-        addToAppLogs("🧪 QA: Orchestrator cfg — FG=\(Int(foregoundTickSeconds))s BGWindow=\(Int(backgroundAcceptanceSeconds))s capWh=\(capacityWhEffective) useSim=true")
+        addToAppLogs("🧪 QA: Orchestrator cfg — UI=\(Int(uiTickSeconds))s Fanout=\(Int(minFanoutInterval))s DB=\(Int(minDBInterval))s BGWindow=\(Int(backgroundAcceptanceSeconds))s capWh=\(capacityWhEffective) useSim=true")
         addToAppLogs("🧪 QA: DB sinks — soc=\(dbSinks.insertSoc != nil) power=\(dbSinks.insertPower != nil) analytics=\(dbSinks.recomputeAnalytics != nil)")
         addToAppLogs("🧪 QA: Battery monitoring=\(UIDevice.current.isBatteryMonitoringEnabled)")
     }
@@ -907,6 +926,7 @@ extension Notification.Name {
     static let petlSessionStarted = Notification.Name("petl.session.started")
     static let petlSessionEnded   = Notification.Name("petl.session.ended")
     static let petlOrchestratorTick = Notification.Name("petl.orchestrator.tick")
+    static let petlOrchestratorUiFrame = Notification.Name("petl.orchestrator.ui.frame")
     static let petlSimulatedSocSample = Notification.Name("petl.simulated.soc.sample")
     static let petlSimulatedPowerSample = Notification.Name("petl.simulated.power.sample")
 }
