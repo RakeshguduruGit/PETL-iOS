@@ -437,7 +437,7 @@ final class LiveActivityManager {
                 remoteEndsHonored += 1
                 osLogger.info("⏹️ Remote end honored (seq=\(seq))")
                 Task { @MainActor in
-                    await endAll("OneSignal")
+                    await endAll("server-push-unplugged")
                 }
             } else {
                 remoteEndsIgnored += 1
@@ -751,6 +751,12 @@ func startActivity(reason: LAStartReason) async {
     
     @MainActor
     private func pushToAll(_ state: PETLLiveActivityAttributes.ContentState) async {
+        // Defensive end: if effectively complete, end to avoid "counting up"
+        if state.timeToFullMinutes <= 1 {
+            await endAll("eta-complete-guard")
+            return
+        }
+        
         for activity in Activity<PETLLiveActivityAttributes>.activities {
             await activity.update(using: state)
         }
