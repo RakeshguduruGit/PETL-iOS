@@ -169,7 +169,7 @@ final class ChargeDB {
 
     func range(from: Date, to: Date) -> [ChargeRow] {
         var out: [ChargeRow] = []; var st: OpaquePointer?
-        sqlite3_prepare_v2(db, "SELECT ts,session_id,is_charging,soc,watts,eta_minutes,event,src FROM charge_log WHERE ts BETWEEN ? AND ? ORDER BY ts ASC", -1, &st, nil)
+        sqlite3_prepare_v2(db, "SELECT ts,session_id,is_charging,soc,watts,eta_minutes,event,src FROM charge_log WHERE ts BETWEEN ? AND ? AND (src != 'present' OR soc > 0) ORDER BY ts ASC", -1, &st, nil)
         defer { sqlite3_finalize(st) }
         sqlite3_bind_double(st, 1, from.timeIntervalSince1970)
         sqlite3_bind_double(st, 2, to.timeIntervalSince1970)

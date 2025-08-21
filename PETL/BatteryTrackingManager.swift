@@ -130,9 +130,19 @@ final class BatteryTrackingManager: ObservableObject {
     func historyPointsFromDB(hours: Int = 24) -> [BatteryDataPoint] {
         let to = Date()
         let from = to.addingTimeInterval(-TimeInterval(hours * 3600))
-        return ChargeDB.shared.range(from: from, to: to).map { r in
+        let rows = ChargeDB.shared.range(from: from, to: to)
+        
+        // Post-filter: remove legacy zero SOC rows for charts (only drops zeros for quality == "present")
+        let filteredRows = rows.filter { row in
+            // Keep all non-present rows (legacy data)
+            guard row.src == "present" else { return true }
+            // For present rows, filter out zeros to prevent chart collapse
+            return row.soc > 0
+        }
+        
+        return filteredRows.map { r in
             BatteryDataPoint(
-                batteryLevel: Float(r.soc) / 100.0,
+                batteryLevel: Float(r.soc) / 100.0,  // Normalized to 0.0-1.0 for charts
                 isCharging: r.isCharging,
                 timestamp: Date(timeIntervalSince1970: r.ts)
             )
