@@ -166,6 +166,14 @@ final class ChargeDB {
         let cutoff = Date().addingTimeInterval(-Double(days) * 86400).timeIntervalSince1970
         _ = exec("DELETE FROM charge_log WHERE ts < \(cutoff)")
     }
+    
+    // One-time cleanup for legacy zero SOC rows
+    func purgeRecentZeroPresentSoc(hours lookback: Int = 48) {
+        let cutoff = Date().addingTimeInterval(TimeInterval(-lookback * 3600)).timeIntervalSince1970
+        let sql = "DELETE FROM charge_log WHERE ts >= \(cutoff) AND src = 'present' AND soc = 0"
+        let deleted = exec(sql)
+        print("🧹 Purged legacy present/0% SOC rows (last \(lookback)h) - result: \(deleted)")
+    }
 
     func range(from: Date, to: Date) -> [ChargeRow] {
         var out: [ChargeRow] = []; var st: OpaquePointer?

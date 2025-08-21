@@ -218,6 +218,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             PETLOrchestrator.shared.validateConfiguration()
         }
         
+        // One-time cleanup for legacy zero artifacts (run once)
+        let purgeFlagKey = "didPurgeZeroPresentSoc_v1"
+        if !UserDefaults.standard.bool(forKey: purgeFlagKey) {
+            ChargeDB.shared.purgeRecentZeroPresentSoc(hours: 48)
+            UserDefaults.standard.set(true, forKey: purgeFlagKey)
+            addToAppLogs("🧹 Purged legacy present/0% SOC rows (48h)")
+        }
+        
         // Wire orchestrator DB sinks to real ChargeDB APIs
         PETLOrchestrator.shared.dbSinks.insertSoc = { pct, ts in
             guard pct > 0 else { return } // avoid bogus zero spikes
