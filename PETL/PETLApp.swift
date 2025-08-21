@@ -764,14 +764,16 @@ final class PETLOrchestrator {
             }
         }
 
-        // 2) Reliability gate — accept 5% steps only after 2 confirmations spaced apart
+        // 2) Reliability gate — ignore bogus 0 from iOS to prevent zero-dips
         var usedMeasured = false
-        if acceptIfReliable(newValue: measuredSoc, kind: kind, now: now) {
+        if measuredSoc > 0, acceptIfReliable(newValue: measuredSoc, kind: kind, now: now) {
             // Gentle course-correct (±1%) toward measured
             let error = Double(measuredSoc) - socSim
             let correction = max(-1.0, min(1.0, error))
             socSim += correction
             usedMeasured = true
+        } else if measuredSoc == 0 {
+            addToAppLogs("⏳ Ignoring measuredSoc=0 (no course-correct)")
         }
 
         let quality = usedMeasured ? "measured" : "simulated"

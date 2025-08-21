@@ -127,24 +127,60 @@ final class BatteryTrackingManager: ObservableObject {
     }
     
     // MARK: - DB Reading Helpers for Charts
+    
+    // Forward-fill resampler to prevent chart area collapse between sparse points
+    private struct _SocSample {
+        let ts: Date
+        let percent: Int
+        let quality: String?
+    }
+    
+    private func _resampleForwardFill(_ points: [_SocSample], every minutes: Int = 10) -> [_SocSample] {
+        guard !points.isEmpty else { return [] }
+        let sorted = points.sorted { $0.ts < $1.ts }
+
+        var out: [_SocSample] = []
+        var cur = sorted.first!.ts
+        let end = sorted.last!.ts
+        var idx = 0
+        var last = sorted.first!
+
+        while cur <= end {
+            while idx + 1 < sorted.count, sorted[idx + 1].ts <= cur {
+                idx += 1
+                last = sorted[idx]
+            }
+            out.append(_SocSample(ts: cur, percent: max(0, last.percent), quality: last.quality))
+            cur = cur.addingTimeInterval(TimeInterval(minutes * 60))
+        }
+        return out
+    }
+    
     func historyPointsFromDB(hours: Int = 24) -> [BatteryDataPoint] {
         let to = Date()
         let from = to.addingTimeInterval(-TimeInterval(hours * 3600))
         let rows = ChargeDB.shared.range(from: from, to: to)
         
-        // Post-filter: remove legacy zero SOC rows for charts (only drops zeros for quality == "present")
-        let filteredRows = rows.filter { row in
-            // Keep all non-present rows (legacy data)
-            guard row.src == "present" else { return true }
-            // For present rows, filter out zeros to prevent chart collapse
-            return row.soc > 0
+        // Filter out legacy zeros (only for 'present') to avoid dips
+        let cleaned: [ChargeRow] = rows.filter { row in
+            if let src = row.src, src == "present" {
+                return row.soc > 0
+            }
+            return true
         }
-        
-        return filteredRows.map { r in
+
+        // Forward-fill resample every 10 minutes to avoid baseline collapse
+        let resampled = _resampleForwardFill(
+            cleaned.map { _SocSample(ts: Date(timeIntervalSince1970: $0.ts), percent: $0.soc, quality: $0.src) },
+            every: 10
+        )
+
+        // Map back to BatteryDataPoint model used by the chart
+        return resampled.map { sample in
             BatteryDataPoint(
-                batteryLevel: Float(r.soc) / 100.0,  // Normalized to 0.0-1.0 for charts
-                isCharging: r.isCharging,
-                timestamp: Date(timeIntervalSince1970: r.ts)
+                batteryLevel: Float(sample.percent) / 100.0,  // Normalized to 0.0-1.0 for charts
+                isCharging: true,  // We're in charging context
+                timestamp: sample.ts
             )
         }
     }
