@@ -98,6 +98,9 @@ final class ChartsVM: ObservableObject {
 struct ContentView: View {
     // Revert from @EnvironmentObject to @ObservedObject on the singleton
     @ObservedObject private var tracker = BatteryTrackingManager.shared
+    
+    // Live UI frame buffer for real-time chart updates
+    @State private var recentSocUI: [ChargeRow] = []
     @StateObject private var analytics = ChargingAnalyticsStore()
     @ObservedObject private var chargeStateStore = ChargeStateStore.shared
     @StateObject private var eta = ETAPresenter()
@@ -198,7 +201,8 @@ struct ContentView: View {
                         deviceToken: deviceToken,
                         logMessages: $logMessages,
                         showLogs: $showLogs,
-                        lastChargingState: lastChargingState
+                        lastChargingState: lastChargingState,
+                        recentSocUI: recentSocUI
                     )
                     .tag(0)
                     
@@ -265,6 +269,23 @@ struct ContentView: View {
         }
         .onReceive(deviceSvc.$profile.compactMap { $0 }) { _ in
             updateBatteryStats()    // NEW: pick up model + capacity as soon as it publishes
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .petlOrchestratorUiFrame)) { note in
+            guard let info = note.userInfo,
+                  let soc = info["soc"] as? Int,
+                  let ts = info["ts"] as? Date else { return }
+
+            // Keep last 30 minutes, dedupe by 10s buckets to avoid overdraw
+            let now = Date()
+            let cutoff = now.addingTimeInterval(-30 * 60)
+
+            var buf = recentSocUI.filter { $0.ts >= cutoff.timeIntervalSince1970 }
+            let bucket = Date(timeIntervalSince1970: floor(ts.timeIntervalSince1970 / 10.0) * 10.0)
+            if !buf.contains(where: { abs($0.ts - bucket.timeIntervalSince1970) < 1 }) {
+                buf.append(ChargeRow(ts: bucket.timeIntervalSince1970, sessionId: "", isCharging: true, soc: max(0, soc), watts: nil, etaMinutes: nil, event: .sample, src: "present"))
+            }
+            buf.sort { $0.ts < $1.ts }
+            recentSocUI = buf
         }
         .onChange(of: phase) { newPhase in
             if newPhase == .active {
@@ -855,6 +876,7 @@ struct HomeNavigationContent: View {
     @Binding var logMessages: [String]
     @Binding var showLogs: Bool
     let lastChargingState: Bool
+    let recentSocUI: [ChargeRow] // Live UI frame buffer
     
     @Environment(\.colorScheme) var colorScheme
     #if DEBUG
@@ -999,7 +1021,7 @@ struct HomeNavigationContent: View {
                         Spacer(minLength: 25)
                         
                         // Battery Chart (placeholder for now)
-                        BatteryChartView()
+                        BatteryChartView(recentSocUI: recentSocUI)
                         
                         // 25px gap to device information card
                         Spacer(minLength: 25)
@@ -1361,13 +1383,29 @@ private struct PowerSession: Identifiable {
 struct SimpleBatteryChart: View {
     @ObservedObject var trackingManager: BatteryTrackingManager
     let axis: ChartTimeAxisModel
+    let recentSocUI: [ChargeRow] // Live UI frame buffer
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         VStack(spacing: 12) {
             // Chart
             if #available(iOS 16.0, *) {
-                Chart(trackingManager.getChartData()) { dataPoint in
+                // Merge DB history with live UI frames for real-time chart updates
+                let history = trackingManager.historyPointsFromDB(hours: 24)
+                let cutoff = Date().addingTimeInterval(-30 * 60)
+                let historic = history.filter { $0.timestamp < cutoff }
+                
+                // Merge historic DB data with recent live UI frames
+                let recent = recentSocUI.map { row in
+                    BatteryDataPoint(
+                        batteryLevel: Float(row.soc) / 100.0,
+                        isCharging: row.isCharging,
+                        timestamp: Date(timeIntervalSince1970: row.ts)
+                    )
+                }
+                let series = (historic + recent).sorted { $0.timestamp < $1.timestamp }
+                
+                Chart(series) { dataPoint in
                     LineMark(
                         x: .value("Time", dataPoint.timestamp),
                         y: .value("Battery", dataPoint.batteryLevel * 100)
@@ -1471,6 +1509,7 @@ struct BatteryChartView: View {
     @ObservedObject var trackingManager = BatteryTrackingManager.shared
     @StateObject private var vm = ChartsVM(trackingManager: BatteryTrackingManager.shared)
     @Environment(\.colorScheme) var colorScheme
+    let recentSocUI: [ChargeRow] // Live UI frame buffer
     #if DEBUG
     @State private var lastAxisKey: String = ""
     #endif
@@ -1485,7 +1524,7 @@ struct BatteryChartView: View {
                         .font(.title3).bold()
                         .frame(maxWidth: .infinity, alignment: .center)
                         .multilineTextAlignment(.center)
-                    SimpleBatteryChart(trackingManager: trackingManager, axis: createHistoryAxis())
+                    SimpleBatteryChart(trackingManager: trackingManager, axis: createHistoryAxis(), recentSocUI: recentSocUI)
                         .frame(minHeight: 220)
                 }
                 .padding(.horizontal, 20)
@@ -1522,8 +1561,22 @@ struct BatteryChartView: View {
     
     // MARK: - Axis helpers
     private func createHistoryAxis() -> ChartTimeAxisModel {
+        // Merge DB history with live UI frames for real-time chart updates
         let history = trackingManager.historyPointsFromDB(hours: 24)
-        return ChartTimeAxisModel(historyDates: history.map { $0.timestamp })
+        let cutoff = Date().addingTimeInterval(-30 * 60)
+        let historic = history.filter { $0.timestamp < cutoff }
+        
+        // Merge historic DB data with recent live UI frames
+        let recent = recentSocUI.map { row in
+            BatteryDataPoint(
+                batteryLevel: Float(row.soc) / 100.0,
+                isCharging: row.isCharging,
+                timestamp: Date(timeIntervalSince1970: row.ts)
+            )
+        }
+        let series = (historic + recent).sorted { $0.timestamp < $1.timestamp }
+        
+        return ChartTimeAxisModel(historyDates: series.map { $0.timestamp })
     }
 
     private func createPowerAxis() -> ChartTimeAxisModel {
