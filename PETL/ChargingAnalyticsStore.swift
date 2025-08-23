@@ -35,6 +35,26 @@ final class ChargingAnalyticsStore: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Subscribe to orchestrator tick for SSOT ETA/power/SOC
+        NotificationCenter.default.publisher(for: .petlOrchestratorTick)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] n in
+                guard let self else { return }
+                let ui = n.userInfo ?? [:]
+                if let eta = ui["etaMin"] as? Int {
+                    self.timeToFullMinutes = eta
+                }
+                if let watts = ui["watts"] as? Double {
+                    self.characteristicWatts = String(format: "%.1fW", max(0.0, watts))
+                }
+                if let soc = ui["soc"] as? Int {
+                    // SOC is used internally but not directly displayed in analytics
+                    // We could add a @Published currentSoc property if needed
+                }
+                self.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
         // Optional: seed from lastEstimate if the estimator exposes it
         if let last = ChargeEstimator.shared.lastEstimate {
             ingest(estimate: last)

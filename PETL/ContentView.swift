@@ -275,6 +275,15 @@ struct ContentView: View {
                   let soc = info["soc"] as? Int,
                   let ts = info["ts"] as? Date else { return }
 
+            // Tail spike clamp (display-only)
+            let last = recentSocUI.last
+            let dt = last != nil ? ts.timeIntervalSince(Date(timeIntervalSince1970: last!.ts)) : 999
+            let dSoc = last != nil ? abs(Double(soc - last!.soc)) : 0
+            if dt < 2.0 && dSoc > 6.0 {
+                addToAppLogs("🧯 UI clamp: ignored spike dSoc=\(dSoc)% dt=\(dt)s")
+                return
+            }
+
             // Keep last 30 minutes, dedupe by 10s buckets to avoid overdraw
             let now = Date()
             let cutoff = now.addingTimeInterval(-30 * 60)

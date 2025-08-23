@@ -141,6 +141,9 @@ final class LiveActivityManager {
     
     static let shared = LiveActivityManager()
     
+    // Add near top of class
+    private var updatesBlocked = false
+    
     private static var isConfigured = false
     private static var didForceFirstPushThisSession = false
     
@@ -401,6 +404,12 @@ final class LiveActivityManager {
     
     #if DEBUG
     func handleRemotePayload(_ json: [AnyHashable: Any]) {
+        // Top of the method
+        if updatesBlocked {
+            addToAppLogs("🚫 Ignoring remote payload — LA updates blocked")
+            return
+        }
+        
         guard let action = json["live_activity_action"] as? String else { return }
         let seq = (json["seq"] as? Int) ?? 0
 
@@ -751,9 +760,37 @@ func startActivity(reason: LAStartReason) async {
     
     @MainActor
     private func pushToAll(_ state: PETLLiveActivityAttributes.ContentState) async {
+        if updatesBlocked {
+            addToAppLogs("🚫 LA update blocked (already ended)")
+            return
+        }
+        
         // Defensive end: if effectively complete, end to avoid "counting up"
         if state.timeToFullMinutes <= 1 {
-            await endAll("eta-complete-guard")
+            updatesBlocked = true
+            addToAppLogs("🏁 LA final state detected (≤1m) — ending now")
+            #if canImport(ActivityKit)
+            for activity in Activity<PETLLiveActivityAttributes>.activities {
+                do {
+                    let final = PETLLiveActivityAttributes.ContentState(
+                        soc: state.soc,
+                        watts: 0.0,
+                        updatedAt: Date(),
+                        isCharging: false,
+                        timeToFullMinutes: 0,
+                        expectedFullDate: Date(),
+                        chargingRate: "0.0W",
+                        batteryLevel: state.batteryLevel,
+                        estimatedWattage: "0.0W"
+                    )
+                    await activity.update(using: final)
+                    try await activity.end(dismissalPolicy: .immediate)
+                    addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
+                } catch {
+                    addToAppLogs("❌ LA end error id=\(activity.id.prefix(6)) \(error.localizedDescription)")
+                }
+            }
+            #endif
             return
         }
         
@@ -842,28 +879,30 @@ func startActivity(reason: LAStartReason) async {
     
     @MainActor
     func endAll(_ reason: String) async {
-        // Ignore spurious "unplugged" right after a start
-        if let ts = lastStartAt, Date().timeIntervalSince(ts) < 3 {
-            laLogger.debug("🪫 Ignoring end within 3s of start (flicker)")
-            return
-        }
-        
-        // Gate duplicate ends (skip if we ended in the last ~5s) to avoid log spam/races
-        if let lastEnd = lastEndAt, Date().timeIntervalSince(lastEnd) < 5 {
-            addToAppLogs("🔄 endAll(\(reason)) skipped - ended \(String(format: "%.1f", Date().timeIntervalSince(lastEnd)))s ago")
-            return
-        }
-        
-        let activities = Activity<PETLLiveActivityAttributes>.activities
-        addToAppLogs("🧪 endAll(\(reason)) about to end \(activities.count) activity(ies)")
-
-        for act in activities {
+        addToAppLogs("🧯 Ending all Live Activities — reason=\(reason)")
+        updatesBlocked = true
+        #if canImport(ActivityKit)
+        for activity in Activity<PETLLiveActivityAttributes>.activities {
             do {
-                try await act.end(dismissalPolicy: .immediate)
+                let final = PETLLiveActivityAttributes.ContentState(
+                    soc: 0,
+                    watts: 0.0,
+                    updatedAt: Date(),
+                    isCharging: false,
+                    timeToFullMinutes: 0,
+                    expectedFullDate: Date(),
+                    chargingRate: "0.0W",
+                    batteryLevel: 0,
+                    estimatedWattage: "0.0W"
+                )
+                await activity.update(using: final)
+                try await activity.end(dismissalPolicy: .immediate)
+                addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
             } catch {
-                addToAppLogs("⚠️ end(\(act.id)) failed: \(error)")
+                addToAppLogs("❌ LA end error id=\(activity.id.prefix(6)) \(error.localizedDescription)")
             }
         }
+        #endif
 
         // Retry until gone (1s, 3s, 7s), then give up
         let backoff: [UInt64] = [1, 3, 7].map { UInt64($0) * 1_000_000_000 }

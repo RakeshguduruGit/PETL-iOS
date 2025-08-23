@@ -231,11 +231,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             guard pct > 0 else { return } // avoid bogus zero spikes
             _ = ChargeDB.shared.insertSimulatedSoc(percent: pct, at: ts, quality: "present")
             addToAppLogs("🪵 DB.soc ← \(pct)% @\(ts) [present]")
+            NotificationCenter.default.post(name: .petlDBWrote, object: nil, userInfo: ["kind":"soc","value":pct,"ts":ts])
         }
         PETLOrchestrator.shared.dbSinks.insertPower = { watts, ts in
             guard watts > 0 else { return } // ignore non-charging zeros
             _ = ChargeDB.shared.insertSimulatedPower(watts: watts, at: ts, trickle: watts < 10.0, quality: "present")
             addToAppLogs(String(format: "🪵 DB.power ← %.1fW @%@ [present]", watts, ts as CVarArg))
+            NotificationCenter.default.post(name: .petlDBWrote, object: nil, userInfo: ["kind":"power","value":watts,"ts":ts])
         }
         PETLOrchestrator.shared.dbSinks.recomputeAnalytics = {
             addToAppLogs("🧮 DB.analytics.recompute(10m) requested")
@@ -939,4 +941,5 @@ extension Notification.Name {
     static let petlOrchestratorUiFrame = Notification.Name("petl.orchestrator.ui.frame")
     static let petlSimulatedSocSample = Notification.Name("petl.simulated.soc.sample")
     static let petlSimulatedPowerSample = Notification.Name("petl.simulated.power.sample")
+    static let petlDBWrote = Notification.Name("petl.db.wrote")
 }
