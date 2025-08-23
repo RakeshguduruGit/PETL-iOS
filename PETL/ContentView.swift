@@ -298,7 +298,8 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .petlChartRefresh)) { _ in
             // Reload chart data immediately when app becomes active
-            let db24h = BatteryTrackingManager.shared.historyPointsFromDB(hours: 24)
+            addToAppLogs("📊 Chart refresh triggered — reloading DB history")
+            _ = BatteryTrackingManager.shared.historyPointsFromDB(hours: 24)
             // The chart will automatically update with the fresh DB data
             // and the recentSocUI buffer will be populated by the seed UI frame
         }
@@ -1401,26 +1402,71 @@ struct SimpleBatteryChart: View {
     let recentSocUI: [ChargeRow] // Live UI frame buffer
     @Environment(\.colorScheme) var colorScheme
     
+    private var chartSeries: [BatteryDataPoint] {
+        // Gap-safe + outlier-safe merged series for the Charging History chart
+        let tailWindow: TimeInterval = 30 * 60
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-tailWindow)
+
+        // 1) Historic from DB (older than 30 minutes)
+        let history = trackingManager.historyPointsFromDB(hours: 24)
+        let historic = history.filter { $0.timestamp < cutoff }
+
+        // 2) Recent from UI live tail (last 30 minutes)
+        //    Clamp display-only outliers: ignore jumps >20% within <5s
+        var recent: [BatteryDataPoint] = []
+        for row in recentSocUI.sorted(by: { $0.ts < $1.ts }) {
+            let dataPoint = BatteryDataPoint(
+                batteryLevel: Float(row.soc) / 100.0,
+                isCharging: row.isCharging,
+                timestamp: Date(timeIntervalSince1970: row.ts)
+            )
+            
+            if let last = recent.last {
+                let dt = dataPoint.timestamp.timeIntervalSince(last.timestamp)
+                let dSoc = abs(Double(dataPoint.batteryLevel * 100 - last.batteryLevel * 100))
+                if dt < 5.0 && dSoc > 20.0 {
+                    addToAppLogs("🧯 UI clamp (gap-safe): ignored outlier dSoc=\(dSoc)% dt=\(dt)s")
+                    continue
+                }
+            }
+            recent.append(dataPoint)
+        }
+
+        // 3) Merge with a gap-bridge so the area never collapses to baseline between sets
+        var merged: [BatteryDataPoint] = historic
+        if let lastHist = historic.last, let firstRecent = recent.first {
+            let gap = firstRecent.timestamp.timeIntervalSince(lastHist.timestamp)
+            if gap > 90 {
+                // Bridge connector at the first recent timestamp with last historic percent
+                merged.append(BatteryDataPoint(
+                    batteryLevel: lastHist.batteryLevel,
+                    isCharging: lastHist.isCharging,
+                    timestamp: firstRecent.timestamp
+                ))
+            }
+        }
+        merged.append(contentsOf: recent)
+        merged.sort { $0.timestamp < $1.timestamp }
+
+        // 4) Pad the tail at 'now' so AreaMark never falls to 0 at the right edge
+        if let last = merged.last, now.timeIntervalSince(last.timestamp) > 10 {
+            merged.append(BatteryDataPoint(
+                batteryLevel: last.batteryLevel,
+                isCharging: last.isCharging,
+                timestamp: now
+            ))
+        }
+
+        return merged
+    }
+    
     var body: some View {
         VStack(spacing: 12) {
             // Chart
             if #available(iOS 16.0, *) {
-                // Merge DB history with live UI frames for real-time chart updates
-                let history = trackingManager.historyPointsFromDB(hours: 24)
-                let cutoff = Date().addingTimeInterval(-30 * 60)
-                let historic = history.filter { $0.timestamp < cutoff }
                 
-                // Merge historic DB data with recent live UI frames
-                let recent = recentSocUI.map { row in
-                    BatteryDataPoint(
-                        batteryLevel: Float(row.soc) / 100.0,
-                        isCharging: row.isCharging,
-                        timestamp: Date(timeIntervalSince1970: row.ts)
-                    )
-                }
-                let series = (historic + recent).sorted { $0.timestamp < $1.timestamp }
-                
-                Chart(series) { dataPoint in
+                Chart(chartSeries) { dataPoint in
                     LineMark(
                         x: .value("Time", dataPoint.timestamp),
                         y: .value("Battery", dataPoint.batteryLevel * 100)
