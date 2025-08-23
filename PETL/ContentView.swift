@@ -296,6 +296,12 @@ struct ContentView: View {
             buf.sort { $0.ts < $1.ts }
             recentSocUI = buf
         }
+        .onReceive(NotificationCenter.default.publisher(for: .petlChartRefresh)) { _ in
+            // Reload chart data immediately when app becomes active
+            let db24h = BatteryTrackingManager.shared.historyPointsFromDB(hours: 24)
+            // The chart will automatically update with the fresh DB data
+            // and the recentSocUI buffer will be populated by the seed UI frame
+        }
         .onChange(of: phase) { newPhase in
             if newPhase == .active {
                 // Defensive battery monitoring - ensure it's enabled when app becomes active

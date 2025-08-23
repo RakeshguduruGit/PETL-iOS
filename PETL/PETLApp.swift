@@ -106,6 +106,12 @@ struct PETLApp: App {
                             _ = BatteryTrackingManager.shared.historyPointsFromDB(hours: 24) // warms up
                         }
                         
+                        // Force an immediate chart refresh + seed a UI frame so the tail has "now"
+                        NotificationCenter.default.post(name: .petlChartRefresh, object: nil)
+                        Task { @MainActor in
+                            await PETLOrchestrator.shared.publishUiFrameNow()
+                        }
+                        
                         if ChargingSessionManager.shared.isChargingActive {
                             PETLOrchestrator.shared.startForegroundLoop()
                         }
@@ -931,6 +937,28 @@ final class PETLOrchestrator {
         addToAppLogs("🧪 QA: Battery monitoring=\(UIDevice.current.isBatteryMonitoringEnabled)")
     }
     
+    @MainActor
+    func publishUiFrameNow() {
+        let now = Date()
+        let isCharging = ChargeStateStore.shared.isCharging
+        let socNow = hasInitializedFromMeasured ? Int(round(socSim))
+                                                : ChargeStateStore.shared.currentBatteryLevel
+        let watts = estimatedWatts(for: socNow, isCharging: isCharging)
+
+        // Rough ETA just for the frame (no DB/LA side effects)
+        let ratePctPerMin = (watts / max(0.1, capacityWhEffective)) * (100.0 / 60.0)
+        let remPct = max(0.0, 100.0 - Double(socNow))
+        let rawEta = ratePctPerMin > 0 ? remPct / ratePctPerMin : .infinity
+        let etaMinutes = Int(min(max(rawEta.rounded(), 1), 240))
+
+        NotificationCenter.default.post(name: .petlOrchestratorUiFrame, object: nil, userInfo: [
+            "soc": max(0, min(100, socNow)),
+            "watts": max(0.0, watts),
+            "etaMinApprox": etaMinutes,
+            "ts": now
+        ])
+    }
+    
     enum TickKind { case fg, bg }
 }
 
@@ -942,4 +970,5 @@ extension Notification.Name {
     static let petlSimulatedSocSample = Notification.Name("petl.simulated.soc.sample")
     static let petlSimulatedPowerSample = Notification.Name("petl.simulated.power.sample")
     static let petlDBWrote = Notification.Name("petl.db.wrote")
+    static let petlChartRefresh = Notification.Name("petl.chart.refresh")
 }
