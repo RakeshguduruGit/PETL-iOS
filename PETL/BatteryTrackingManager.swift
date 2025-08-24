@@ -184,6 +184,7 @@ final class BatteryTrackingManager: ObservableObject {
             )
         }
         
+        // ===== BEGIN STABILITY-LOCKED: Render-time tail anchor (do not edit) =====
         // Chart tail anchor: fill-forward the last non-zero point up to 5 minutes to prevent momentary no-data drops
         if let last = points.last {
             let now = Date()
@@ -193,8 +194,10 @@ final class BatteryTrackingManager: ObservableObject {
                     isCharging: last.isCharging,
                     timestamp: now
                 ))
+                addToAppLogs("🪢 Tail anchor added — carry last value \(last.batteryLevel) for \(Int(now.timeIntervalSince(last.timestamp)))s")
             }
         }
+        // ===== END STABILITY-LOCKED: Render-time tail anchor =====
         
         return points
     }

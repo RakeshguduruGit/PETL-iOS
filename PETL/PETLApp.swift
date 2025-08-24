@@ -825,6 +825,16 @@ final class PETLOrchestrator {
         addToAppLogs("📌 Final sample persisted — soc=\(socToPersist)% watts=\(String(format: "%.1f", lastKnownWatts))W reason=\(reason)")
         // Nudge charts immediately
         NotificationCenter.default.post(name: .petlDBWrote, object: nil, userInfo: ["kind":"final","value":socToPersist,"watts":lastKnownWatts,"ts":now])
+        
+        // ===== BEGIN STABILITY-LOCKED: Chart tail anchor (do not edit) =====
+        // Also append a 1s "tail" row so bar/bucket charts show the last value at NOW
+        let tailTs = now.addingTimeInterval(1) // keep it next to 'now' but later
+        if socToPersist > 0 {
+            dbSinks.insertSoc?(socToPersist, tailTs)
+            NotificationCenter.default.post(name: .petlDBWrote, object: nil,
+                                            userInfo: ["kind":"soc-tail","value":socToPersist,"ts":tailTs])
+        }
+        // ===== END STABILITY-LOCKED: Chart tail anchor =====
     }
     
     @MainActor
