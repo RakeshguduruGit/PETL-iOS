@@ -1494,14 +1494,38 @@ struct SimpleBatteryChart: View {
             }
         }
 
+        // ===== BEGIN STABILITY-LOCKED: Chart diagnostics and final guard (do not edit) =====
+        // ---- Diagnostics + final guard ---------------------------------------------
+
+        // Track which path we used for recent data so we can see it in logs
+        var reason = "ui"
+        if recentUI.isEmpty && !recentDB.isEmpty { reason = "recent-db" }
+        if merged.isEmpty && history.last != nil { reason = "seed-last-db" }
+        if merged.count >= 2, merged.suffix(2).allSatisfy({ $0.timestamp > cutoff && $0.batteryLevel == (UserDefaults.standard.integer(forKey: "petl.lastSocPct") > 0 ? Float(UserDefaults.standard.integer(forKey: "petl.lastSocPct"))/100.0 : $0.batteryLevel) }) {
+            // synthesized cached points likely used
+            reason = "cached-synth"
+        }
+        if let last = merged.last, last.batteryLevel <= 0 {
+            reason = "repaired-0-tail"
+        }
+
         // 4) Pad the tail at 'now' so AreaMark never falls to 0 at the right edge
         if let last = merged.last, now.timeIntervalSince(last.timestamp) > 0 {
             merged.append(BatteryDataPoint(
-                batteryLevel: last.batteryLevel,
+                batteryLevel: max(last.batteryLevel, 0.01), // clamp away from 0 visually
                 isCharging: last.isCharging,
                 timestamp: now
             ))
         }
+
+        // Final diagnostic — one compact line per build so we can correlate in logs
+        if let last = merged.last {
+            addToAppLogs(
+                "📈 series: hist=\(historic.count) ui=\(recentUI.count) db30m=\(recentDB.count) merged=\(merged.count) " +
+                "last=\(Int(last.batteryLevel*100))% reason=\(reason)"
+            )
+        }
+        // ===== END STABILITY-LOCKED: Chart diagnostics and final guard =====
 
         return merged
     }
