@@ -871,13 +871,25 @@ final class PETLOrchestrator {
         }
 
         // 6) Optional DB sinks (rate-limited in FG; avoid inserting bogus zero points)
+        // Write at least once per interval even if measured hasn't "stabilized".
+        // Use the best-available SoC (sim or last measured) but never persist zero.
         let shouldWriteDBNow: Bool = (kind == .bg) || now.timeIntervalSince(lastDBAt) >= minDBInterval
-        if hasInitializedFromMeasured && shouldWriteDBNow {
+        if shouldWriteDBNow {
             lastDBAt = now
-            if Int(round(socSim)) > 0 { dbSinks.insertSoc?(Int(round(socSim)), now) }
+
+            // Prefer simulated (continuously integrated) SoC; fall back to current measured.
+            var socToPersist = Int(round(socSim))
+            if socToPersist <= 0 {
+                let measuredNow = ChargeStateStore.shared.currentBatteryLevel
+                socToPersist = max(1, measuredNow) // never write 0 — gaps would render as 0% spikes
+            }
+
+            // Persist only meaningful values
+            if socToPersist > 0 { dbSinks.insertSoc?(socToPersist, now) }
             if watts > 0 { dbSinks.insertPower?(watts, now) }
             dbSinks.recomputeAnalytics?()
-            addToAppLogs("💾 DB write — soc/power @\(now)")
+
+            addToAppLogs("💾 DB write — soc=\(socToPersist)% power=\(String(format: "%.1f", watts))W @\(now)")
         }
 
         // Diagnostic log each tick (lightweight)
