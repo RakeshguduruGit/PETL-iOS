@@ -1718,7 +1718,14 @@ struct BatteryChartView: View {
                 timestamp: Date(timeIntervalSince1970: row.ts)
             )
         }
-        let series = (historic + recent).sorted { $0.timestamp < $1.timestamp }
+        var series = (historic + recent).sorted { $0.timestamp < $1.timestamp }
+        
+        // ===== BEGIN STABILITY-LOCKED: X-axis domain extension (do not edit) =====
+        // ✅ ensure the axis domain reaches 'now' so padded/synthesized tail shows immediately
+        series.append(
+            BatteryDataPoint(batteryLevel: 0, isCharging: false, timestamp: Date())
+        )
+        // ===== END STABILITY-LOCKED: X-axis domain extension =====
         
         return ChartTimeAxisModel(historyDates: series.map { $0.timestamp })
     }
