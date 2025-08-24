@@ -176,13 +176,27 @@ final class BatteryTrackingManager: ObservableObject {
         )
 
         // Map back to BatteryDataPoint model used by the chart
-        return resampled.map { sample in
+        var points = resampled.map { sample in
             BatteryDataPoint(
                 batteryLevel: Float(sample.percent) / 100.0,  // Normalized to 0.0-1.0 for charts
                 isCharging: true,  // We're in charging context
                 timestamp: sample.ts
             )
         }
+        
+        // Chart tail anchor: fill-forward the last non-zero point up to 5 minutes to prevent momentary no-data drops
+        if let last = points.last {
+            let now = Date()
+            if now.timeIntervalSince(last.timestamp) <= 5*60, last.batteryLevel > 0 {
+                points.append(BatteryDataPoint(
+                    batteryLevel: last.batteryLevel,
+                    isCharging: last.isCharging,
+                    timestamp: now
+                ))
+            }
+        }
+        
+        return points
     }
     
     // Optional: trim log spam so Xcode doesn't choke

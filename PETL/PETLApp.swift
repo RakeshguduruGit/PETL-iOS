@@ -121,6 +121,11 @@ struct PETLApp: App {
                         PETLOrchestrator.shared.stopForegroundLoop()
                         appDelegate.scheduleRefresh(in: 5)
                         appDelegate.debugDumpPendingBGRequests(context: "on background")
+                        
+                        // Persist final sample when app backgrounds to handle force-close timing
+                        Task { @MainActor in
+                            await PETLOrchestrator.shared.persistFinalSample(reason: "scene-background")
+                        }
                     }
                 }
         }
