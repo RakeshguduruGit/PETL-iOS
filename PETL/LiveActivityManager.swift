@@ -404,10 +404,27 @@ final class LiveActivityManager {
     
     #if DEBUG
     func handleRemotePayload(_ json: [AnyHashable: Any]) {
-        // Top of the method
+        // Relaxed blocking: allow updates when watts/ETA change significantly
         if updatesBlocked {
-            addToAppLogs("🚫 Ignoring remote payload — LA updates blocked")
-            return
+            // Check if this payload has meaningful changes that warrant an update
+            if let watts = json["watts"] as? Double,
+               let eta = json["etaMin"] as? Int {
+                let lastWatts = Double(lastRichState?.estimatedWattage.replacingOccurrences(of: "W", with: "") ?? "0") ?? 0
+                let lastEta = lastRichState?.timeToFullMinutes ?? 0
+                let wattsDelta = abs(watts - lastWatts)
+                let etaDelta = abs(eta - lastEta)
+                
+                // Allow update if significant change (0.5W or 2+ min ETA)
+                if wattsDelta >= 0.5 || etaDelta >= 2 {
+                    addToAppLogs("🔄 Allowing blocked update — wattsΔ=\(wattsDelta)W etaΔ=\(etaDelta)m")
+                } else {
+                    addToAppLogs("🚫 Ignoring blocked payload — no significant change")
+                    return
+                }
+            } else {
+                addToAppLogs("🚫 Ignoring blocked payload — no watts/ETA data")
+                return
+            }
         }
         
         guard let action = json["live_activity_action"] as? String else { return }
@@ -747,6 +764,7 @@ func startActivity(reason: LAStartReason) async {
         // Schedule background refresh for ongoing updates
         if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
             appDelegate.scheduleRefresh(in: 5) // when session starts
+            appDelegate.scheduleProcessing(in: 10) // longer windows when plugged in
         }
     }
 }
@@ -816,6 +834,7 @@ func startActivity(reason: LAStartReason) async {
             // Cancel background refresh since no activities remain
             if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
                 appDelegate.cancelRefresh()
+                appDelegate.cancelProcessing()
             }
             return
         }

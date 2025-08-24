@@ -27,6 +27,7 @@ let appLogger = Logger(subsystem: "com.petl.app", category: "main")
 // Background task identifiers
 let backgroundTaskIdentifier = "com.petl.background.charging.monitor"
 private let refreshId = "com.petl.refresh"
+private let processingId = "com.petl.processing.charging.analytics"
 
 // Notification listener for OneSignal
 class NotificationListener: NSObject, OSNotificationClickListener {
@@ -426,6 +427,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshId, using: nil) { task in
             self.handleRefresh(task: task as! BGAppRefreshTask)
         }
+        
+        // Add BGProcessing for longer execution windows when plugged in
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: processingId, using: nil) { task in
+            self.handleProcessing(task: task as! BGProcessingTask)
+        }
     }
     
     func scheduleRefresh(in minutes: Int = 5) {
@@ -447,6 +453,28 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func cancelRefresh() {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: refreshId)
         Task { @MainActor in addToAppLogs("🛑 BG refresh cancelled") }
+    }
+    
+    func scheduleProcessing(in minutes: Int = 10) {
+        let req = BGProcessingTaskRequest(identifier: processingId)
+        req.requiresExternalPower = true
+        req.requiresNetworkConnectivity = true
+        req.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
+        do { 
+            try BGTaskScheduler.shared.submit(req)
+            let when = req.earliestBeginDate?.formatted() ?? "nil"
+            Task { @MainActor in 
+                addToAppLogs("✅ BG processing scheduled for \(minutes) minutes")
+                addToAppLogs("🗓️ BG processing submit ok — earliest=\(when)")
+            }
+        } catch { 
+            Task { @MainActor in addToAppLogs("⚠️ BG processing submit failed: \(error)") }
+        }
+    }
+    
+    func cancelProcessing() {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: processingId)
+        Task { @MainActor in addToAppLogs("🛑 BG processing cancelled") }
     }
     
     func debugDumpPendingBGRequests(context: String) {
@@ -471,7 +499,37 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Task { @MainActor in
             addToAppLogs("🔧 BG refresh fired")
             
+            // Log BG wake drift for diagnostics
+            let now = Date()
+            let last = UserDefaults.standard.object(forKey: "bg.lastWake") as? Date ?? .distantPast
+            UserDefaults.standard.set(now, forKey: "bg.lastWake")
+            addToAppLogs(String(format: "⏰ BG wake drift=%.0fs", now.timeIntervalSince(last)))
+            
             await PETLOrchestrator.shared.backgroundRefreshTick(reason: "bg-refresh")
+            task.setTaskCompleted(success: true)
+        }
+    }
+    
+    func handleProcessing(task: BGProcessingTask) {
+        // Schedule next processing task when plugged in
+        if ChargeStateStore.shared.isCharging {
+            scheduleProcessing(in: 10) // 10-minute intervals when charging
+        }
+
+        task.expirationHandler = {
+            Task { @MainActor in addToAppLogs("⏳ BG processing expired") }
+        }
+
+        Task { @MainActor in
+            addToAppLogs("🔧 BG processing fired")
+            
+            // Log BG wake drift for diagnostics
+            let now = Date()
+            let last = UserDefaults.standard.object(forKey: "bg.lastWake") as? Date ?? .distantPast
+            UserDefaults.standard.set(now, forKey: "bg.lastWake")
+            addToAppLogs(String(format: "⏰ BG processing wake drift=%.0fs", now.timeIntervalSince(last)))
+            
+            await PETLOrchestrator.shared.backgroundRefreshTick(reason: "bg-processing")
             task.setTaskCompleted(success: true)
         }
     }
