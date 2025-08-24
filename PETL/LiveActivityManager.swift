@@ -144,6 +144,14 @@ final class LiveActivityManager {
     // Add near top of class
     private var updatesBlocked = false
     
+    // Relaxed gating state for periodic LA updates
+    private var lastAllowedUpdateAt: Date = .distantPast
+    private var lastAllowedWatts: Double = -1
+    private var lastAllowedETA: Int = -1
+    private let minUpdateInterval: TimeInterval = 30 // seconds
+    private let minWattsDelta: Double = 0.5
+    private let minEtaDeltaMinutes: Int = 2
+    
     private static var isConfigured = false
     private static var didForceFirstPushThisSession = false
     
@@ -404,28 +412,39 @@ final class LiveActivityManager {
     
     #if DEBUG
     func handleRemotePayload(_ json: [AnyHashable: Any]) {
-        // Relaxed blocking: allow updates when watts/ETA change significantly
-        if updatesBlocked {
-            // Check if this payload has meaningful changes that warrant an update
-            if let watts = json["watts"] as? Double,
-               let eta = json["etaMin"] as? Int {
-                let lastWatts = Double(lastRichState?.estimatedWattage.replacingOccurrences(of: "W", with: "") ?? "0") ?? 0
-                let lastEta = lastRichState?.timeToFullMinutes ?? 0
-                let wattsDelta = abs(watts - lastWatts)
-                let etaDelta = abs(eta - lastEta)
-                
-                // Allow update if significant change (0.5W or 2+ min ETA)
-                if wattsDelta >= 0.5 || etaDelta >= 2 {
-                    addToAppLogs("🔄 Allowing blocked update — wattsΔ=\(wattsDelta)W etaΔ=\(etaDelta)m")
-                } else {
-                    addToAppLogs("🚫 Ignoring blocked payload — no significant change")
-                    return
-                }
-            } else {
-                addToAppLogs("🚫 Ignoring blocked payload — no watts/ETA data")
-                return
-            }
+        // 1. Parse watts and ETA from payload
+        let payloadWatts: Double = {
+            if let w = json["watts"] as? Double { return w }
+            if let s = json["watts"] as? String, let v = Double(s) { return v }
+            if let v = json["simWatts"] as? Double { return v } // optional alt
+            return 0.0
+        }()
+
+        let payloadEtaMinutes: Int = {
+            if let e = json["timeToFullMinutes"] as? Int { return e }
+            if let s = json["timeToFullMinutes"] as? String, let v = Int(s) { return v }
+            return 0
+        }()
+
+        // 2. Relaxed gate: allow update if meaningful change or periodic time has passed
+        let now = Date()
+        let etaMinutes = max(0, payloadEtaMinutes)
+        let wattsValue = max(0.0, payloadWatts)
+        let timeOK = now.timeIntervalSince(lastAllowedUpdateAt) >= minUpdateInterval
+        let wattsOK = abs(wattsValue - lastAllowedWatts) >= minWattsDelta
+        let etaOK = abs(etaMinutes - lastAllowedETA) >= minEtaDeltaMinutes
+
+        if !(timeOK || wattsOK || etaOK) {
+            addToAppLogs("🚫 Ignoring remote payload — LA updates blocked (dt=\(Int(now.timeIntervalSince(lastAllowedUpdateAt)))s, dW=\(String(format: "%.1f", abs(wattsValue - lastAllowedWatts)))W, dETA=\(abs(etaMinutes - lastAllowedETA))m)")
+            return
         }
+
+        // Passing gate — record and proceed
+        lastAllowedUpdateAt = now
+        lastAllowedWatts = wattsValue
+        lastAllowedETA = etaMinutes
+
+        addToAppLogs("🟦 LA update allowed — watts=\(String(format: "%.1f", wattsValue))W eta=\(etaMinutes)m")
         
         guard let action = json["live_activity_action"] as? String else { return }
         let seq = (json["seq"] as? Int) ?? 0

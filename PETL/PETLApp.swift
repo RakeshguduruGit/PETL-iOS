@@ -151,6 +151,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                     PETLOrchestrator.shared.startForegroundLoop()
                 }
                 self?.scheduleRefresh(in: 5) // seed BG cadence
+                self?.scheduleProcessing(in: 10) // longer BG windows while plugged in
             }
         }
         NotificationCenter.default.addObserver(forName: .petlSessionEnded, object: nil, queue: .main) { [weak self] _ in
@@ -158,6 +159,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 addToAppLogs("🛑 Charging session ENDED — stopping loops & Live Activity")
                 PETLOrchestrator.shared.stopForegroundLoop()
                 self?.cancelRefresh()
+                self?.cancelProcessing()
                 await LiveActivityManager.shared.endAll("session-end")
             }
         }
