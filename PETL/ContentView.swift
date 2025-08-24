@@ -202,7 +202,8 @@ struct ContentView: View {
                         logMessages: $logMessages,
                         showLogs: $showLogs,
                         lastChargingState: lastChargingState,
-                        recentSocUI: recentSocUI
+                        recentSocUI: recentSocUI,
+                        isInWarmUpPeriod: isInWarmUpPeriod
                     )
                     .tag(0)
                     
@@ -902,6 +903,9 @@ struct HomeNavigationContent: View {
     @Binding var showLogs: Bool
     let lastChargingState: Bool
     let recentSocUI: [ChargeRow] // Live UI frame buffer
+    // ===== BEGIN STABILITY-LOCKED: Warm-up period parameter (do not edit) =====
+    let isInWarmUpPeriod: Bool
+    // ===== END STABILITY-LOCKED: Warm-up period parameter =====
     
     @Environment(\.colorScheme) var colorScheme
     #if DEBUG
@@ -1078,8 +1082,9 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
+                                // ===== BEGIN STABILITY-LOCKED: Device row loading state (do not edit) =====
                                 Group {
-                                    if tracker.isCharging && deviceSvc.profile != nil {
+                                    if tracker.isCharging && deviceModel != "..." {
                                         Text(deviceModel)
                                     } else if tracker.isCharging {
                                         LoadingDotsView(
@@ -1090,9 +1095,10 @@ struct HomeNavigationContent: View {
                                         Text("...")
                                     }
                                 }
-                                    .font(.system(size: 17, weight: .regular))
-                                    .foregroundColor(Color(.secondaryLabel))
-                                    .tracking(-0.43)
+                                // ===== END STABILITY-LOCKED: Device row loading state =====
+                                .font(.system(size: 17, weight: .regular))
+                                .foregroundColor(Color(.secondaryLabel))
+                                .tracking(-0.43)
                             }
                             .padding(.horizontal, 20)
                             .frame(height: 48)
@@ -1109,8 +1115,9 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
+                                // ===== BEGIN STABILITY-LOCKED: Battery capacity row loading state (do not edit) =====
                                 Group {
-                                    if tracker.isCharging && deviceSvc.profile != nil {
+                                    if tracker.isCharging && batteryCapacity != "..." {
                                         Text(batteryCapacity)
                                     } else if tracker.isCharging {
                                         LoadingDotsView(
@@ -1121,9 +1128,10 @@ struct HomeNavigationContent: View {
                                         Text("...")
                                     }
                                 }
-                                    .font(.system(size: 17, weight: .regular))
-                                    .foregroundColor(Color(.secondaryLabel))
-                                    .tracking(-0.43)
+                                // ===== END STABILITY-LOCKED: Battery capacity row loading state =====
+                                .font(.system(size: 17, weight: .regular))
+                                .foregroundColor(Color(.secondaryLabel))
+                                .tracking(-0.43)
                             }
                             .padding(.horizontal, 20)
                             .frame(height: 48)
