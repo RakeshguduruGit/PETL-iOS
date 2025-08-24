@@ -157,6 +157,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         NotificationCenter.default.addObserver(forName: .petlSessionEnded, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 addToAppLogs("🛑 Charging session ENDED — stopping loops & Live Activity")
+                await PETLOrchestrator.shared.persistFinalSample(reason: "observer-session-end")
                 PETLOrchestrator.shared.stopForegroundLoop()
                 self?.cancelRefresh()
                 self?.cancelProcessing()
@@ -754,6 +755,9 @@ final class PETLOrchestrator {
     private var lastFanoutAt: Date = .distantPast
     private var lastDBAt: Date = .distantPast
     
+    // Track last computed watts to persist a meaningful final sample on unplug
+    private var lastKnownWatts: Double = 0.0
+    
     // DB sinks (to be wired)
     struct DBSinks {
         var insertSoc: ((Int, Date) -> Void)?
@@ -799,6 +803,23 @@ final class PETLOrchestrator {
             }
         }
         await tick(kind: .bg, reason: reason)
+    }
+    
+    @MainActor
+    func persistFinalSample(reason: String) {
+        let now = Date()
+        // Use simulated SoC; fall back to measured if needed, but never write 0
+        var socToPersist = Int(round(socSim))
+        if socToPersist <= 0 {
+            let measuredNow = ChargeStateStore.shared.currentBatteryLevel
+            socToPersist = max(1, measuredNow)
+        }
+        if socToPersist > 0 { dbSinks.insertSoc?(socToPersist, now) }
+        if lastKnownWatts > 0 { dbSinks.insertPower?(lastKnownWatts, now) }
+        dbSinks.recomputeAnalytics?()
+        addToAppLogs("📌 Final sample persisted — soc=\(socToPersist)% watts=\(String(format: "%.1f", lastKnownWatts))W reason=\(reason)")
+        // Nudge charts immediately
+        NotificationCenter.default.post(name: .petlDBWrote, object: nil, userInfo: ["kind":"final","value":socToPersist,"watts":lastKnownWatts,"ts":now])
     }
     
     @MainActor
@@ -848,6 +869,8 @@ final class PETLOrchestrator {
 
         // 3) Simulate power and integrate SoC between measurements
         let watts = estimatedWatts(for: Int(round(socSim)), isCharging: isCharging)
+        // Remember latest watts for potential final persistence on session end
+        lastKnownWatts = watts
         if isCharging {
             let dE_Wh = watts * dt / 3600.0
             let dSoC = dE_Wh / max(0.1, capacityWhEffective) * 100.0
@@ -872,7 +895,8 @@ final class PETLOrchestrator {
         // BG end-guard so LA doesn't count up after done
         let precheckETA = Int(min(max(etaMinutes.rounded(), 1), 240))
         if kind == .bg, (!isCharging || socSim >= 100.0 || precheckETA <= 1) {
-            addToAppLogs("🏁 BG: session complete/unplug — ending activity")
+            addToAppLogs("🏁 BG: session complete/unplug — persisting final sample & ending activity")
+            await persistFinalSample(reason: "bg-session-end")
             NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
             await LiveActivityManager.shared.endAll("bg-session-end")
             return
@@ -881,7 +905,8 @@ final class PETLOrchestrator {
         // Only end if unplugged or actually full (not on momentary ETA=0)
         // Only end from FG ticks to avoid BG thrash on momentary stalls
         if kind == .fg, (!isCharging || socSim >= 100.0) {
-            addToAppLogs("🏁 Session completed or not charging — ending activity")
+            addToAppLogs("🏁 Session completed or not charging — persisting final sample & ending activity")
+            await persistFinalSample(reason: "fg-session-end")
             NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
             // Best-effort: also end live activities immediately
             await LiveActivityManager.shared.endAll("session-end")
