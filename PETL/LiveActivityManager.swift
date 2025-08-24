@@ -151,6 +151,7 @@ final class LiveActivityManager {
     private let minUpdateInterval: TimeInterval = 30 // seconds
     private let minWattsDelta: Double = 0.5
     private let minEtaDeltaMinutes: Int = 2
+    private var lastContentState: PETLLiveActivityAttributes.ContentState?
     
     private static var isConfigured = false
     private static var didForceFirstPushThisSession = false
@@ -445,6 +446,16 @@ final class LiveActivityManager {
         lastAllowedETA = etaMinutes
 
         addToAppLogs("🟦 LA update allowed — watts=\(String(format: "%.1f", wattsValue))W eta=\(etaMinutes)m")
+        
+        // Sanitize zero payloads during active charge by falling back to last-known content
+        let chargingNow = ChargeStateStore.shared.isCharging
+        var wattsForUpdate = max(0.0, payloadWatts)
+        var etaForUpdate = max(0, payloadEtaMinutes)
+        if chargingNow {
+            if wattsForUpdate == 0, let last = lastContentState { wattsForUpdate = max(last.watts, 5.0) }
+            if etaForUpdate == 0, let last = lastContentState { etaForUpdate = max(last.timeToFullMinutes, 1) }
+        }
+        addToAppLogs("🟦 LA update allowed — watts=\(String(format: "%.1f", wattsForUpdate))W eta=\(etaForUpdate)m")
         
         guard let action = json["live_activity_action"] as? String else { return }
         let seq = (json["seq"] as? Int) ?? 0
@@ -834,6 +845,7 @@ func startActivity(reason: LAStartReason) async {
         for activity in Activity<PETLLiveActivityAttributes>.activities {
             await activity.update(using: state)
         }
+        self.lastContentState = state
         let message = "🔄 push level=\(Int(state.batteryLevel*100)) rate=\(state.chargingRate) time=\(state.timeToFullMinutes) min"
         laLogger.info("\(message)")
     }

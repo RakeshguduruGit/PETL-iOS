@@ -38,6 +38,7 @@
 	<array>
 		<string>com.petl.background.charging.monitor</string>
 		<string>com.petl.liveactivity.cleanup</string>
+		<string>com.petl.processing.charging.analytics</string>
 		<string>com.petl.refresh</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
