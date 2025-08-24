@@ -1414,21 +1414,23 @@ struct SimpleBatteryChart: View {
         let now = Date()
         let cutoff = now.addingTimeInterval(-tailWindow)
 
-        // 1) Historic from DB (older than 30 minutes)
+        // Pull full history once
         let history = trackingManager.historyPointsFromDB(hours: 24)
+
+        // 1) Historic from DB (older than 30 minutes)
         let historic = history.filter { $0.timestamp < cutoff }
 
-        // 2) Recent from UI live tail (last 30 minutes)
-        //    Clamp display-only outliers: ignore jumps >20% within <5s
-        var recent: [BatteryDataPoint] = []
+        // 2) Recent candidates
+        // 2a) Recent from UI live tail (last 30 minutes) with outlier clamp
+        var recentUI: [BatteryDataPoint] = []
         for row in recentSocUI.sorted(by: { $0.ts < $1.ts }) {
             let dataPoint = BatteryDataPoint(
                 batteryLevel: Float(row.soc) / 100.0,
                 isCharging: row.isCharging,
                 timestamp: Date(timeIntervalSince1970: row.ts)
             )
-            
-            if let last = recent.last {
+
+            if let last = recentUI.last {
                 let dt = dataPoint.timestamp.timeIntervalSince(last.timestamp)
                 let dSoc = abs(Double(dataPoint.batteryLevel * 100 - last.batteryLevel * 100))
                 if dt < 5.0 && dSoc > 20.0 {
@@ -1436,8 +1438,13 @@ struct SimpleBatteryChart: View {
                     continue
                 }
             }
-            recent.append(dataPoint)
+            recentUI.append(dataPoint)
         }
+        // 2b) Recent from DB (last 30 minutes) — used when UI buffer is empty (e.g., after relaunch)
+        let recentDB: [BatteryDataPoint] = history.filter { $0.timestamp >= cutoff }
+
+        // Prefer UI tail when present; else fall back to DB for the last 30 minutes
+        let recent: [BatteryDataPoint] = recentUI.isEmpty ? recentDB : recentUI
 
         // 3) Merge with a gap-bridge so the area never collapses to baseline between sets
         var merged: [BatteryDataPoint] = historic
@@ -1455,10 +1462,14 @@ struct SimpleBatteryChart: View {
         merged.append(contentsOf: recent)
         merged.sort { $0.timestamp < $1.timestamp }
 
+        // If everything is empty (e.g., first-ever launch), seed with the last DB point (if any)
+        if merged.isEmpty, let lastAny = history.last {
+            merged.append(lastAny)
+        }
+
         // Cold-launch fallback: synthesize from last cached SoC if history/UI are empty
         if merged.isEmpty {
             let lastPct = UserDefaults.standard.integer(forKey: "petl.lastSocPct")
-            let lastTsRaw = UserDefaults.standard.double(forKey: "petl.lastSocTs")
             if lastPct > 0 {
                 let nowTs = Date()
                 let prevTs = nowTs.addingTimeInterval(-1)
@@ -1469,7 +1480,6 @@ struct SimpleBatteryChart: View {
             }
         }
 
-        // ===== BEGIN STABILITY-LOCKED: 0% tail repair (do not edit) =====
         // If the last point is somehow 0%, try the cached SoC to avoid a visual drop
         if let last = merged.last, last.batteryLevel <= 0 {
             let cachedPct = UserDefaults.standard.integer(forKey: "petl.lastSocPct")
@@ -1477,17 +1487,15 @@ struct SimpleBatteryChart: View {
                 let lvl = Float(cachedPct) / 100.0
                 let nowTs = Date()
                 let prevTs = nowTs.addingTimeInterval(-1)
-                // Replace final 0% with cached level and add a 'now' point
                 _ = merged.popLast()
                 merged.append(BatteryDataPoint(batteryLevel: lvl, isCharging: false, timestamp: prevTs))
                 merged.append(BatteryDataPoint(batteryLevel: lvl, isCharging: false, timestamp: nowTs))
-                addToAppLogs("🧷 Repaired 0%% tail using cached SoC \(cachedPct)%%")
+                addToAppLogs("🧷 Repaired 0% tail using cached SoC \(cachedPct)%")
             }
         }
-        // ===== END STABILITY-LOCKED: 0% tail repair =====
 
         // 4) Pad the tail at 'now' so AreaMark never falls to 0 at the right edge
-        if let last = merged.last, now.timeIntervalSince(last.timestamp) > 10 {
+        if let last = merged.last, now.timeIntervalSince(last.timestamp) > 0 {
             merged.append(BatteryDataPoint(
                 batteryLevel: last.batteryLevel,
                 isCharging: last.isCharging,
