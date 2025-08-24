@@ -1010,11 +1010,12 @@ struct HomeNavigationContent: View {
                                         .frame(height: 64)
                                     }
                                 } else {
-                                    Text("—")
-                                        .font(.system(size: 57, weight: .regular))
-                                        .foregroundColor(Color(.label))
-                                        .tracking(-0.25)
-                                        .frame(height: 64)
+                                    LoadingDotsView(
+                                        font: .system(size: 57, weight: .regular),
+                                        color: Color(.label)
+                                    )
+                                    .tracking(-0.25)
+                                    .frame(height: 64)
                                 }
                             } else {
                                 // Show PETL logo in the center when not connected - moved up 10px for perfect centering
@@ -1077,7 +1078,18 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(tracker.isCharging ? deviceModel : "...")
+                                Group {
+                                    if tracker.isCharging && deviceSvc.profile != nil {
+                                        Text(deviceModel)
+                                    } else if tracker.isCharging {
+                                        LoadingDotsView(
+                                            font: .system(size: 17, weight: .regular),
+                                            color: Color(.secondaryLabel)
+                                        )
+                                    } else {
+                                        Text("...")
+                                    }
+                                }
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
@@ -1097,7 +1109,18 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(tracker.isCharging ? batteryCapacity : "...")
+                                Group {
+                                    if tracker.isCharging && deviceSvc.profile != nil {
+                                        Text(batteryCapacity)
+                                    } else if tracker.isCharging {
+                                        LoadingDotsView(
+                                            font: .system(size: 17, weight: .regular),
+                                            color: Color(.secondaryLabel)
+                                        )
+                                    } else {
+                                        Text("...")
+                                    }
+                                }
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
@@ -1117,7 +1140,18 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(tracker.isCharging ? batteryHealth : "...")
+                                Group {
+                                    if tracker.isCharging && batteryHealth != "..." {
+                                        Text(batteryHealth)
+                                    } else if tracker.isCharging {
+                                        LoadingDotsView(
+                                            font: .system(size: 17, weight: .regular),
+                                            color: Color(.secondaryLabel)
+                                        )
+                                    } else {
+                                        Text("...")
+                                    }
+                                }
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
@@ -1160,7 +1194,18 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(tracker.isCharging ? analytics.characteristicLabel : "...")
+                                Group {
+                                    if tracker.isCharging && !isInWarmUpPeriod && analytics.characteristicLabel != "..." {
+                                        Text(analytics.characteristicLabel)
+                                    } else if tracker.isCharging {
+                                        LoadingDotsView(
+                                            font: .system(size: 17, weight: .regular),
+                                            color: Color(.secondaryLabel)
+                                        )
+                                    } else {
+                                        Text("...")
+                                    }
+                                }
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
@@ -1180,7 +1225,18 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(tracker.isCharging ? analytics.characteristicWatts : "...")
+                                Group {
+                                    if tracker.isCharging && !isInWarmUpPeriod && analytics.characteristicWatts != "..." {
+                                        Text(analytics.characteristicWatts)
+                                    } else if tracker.isCharging {
+                                        LoadingDotsView(
+                                            font: .system(size: 17, weight: .regular),
+                                            color: Color(.secondaryLabel)
+                                        )
+                                    } else {
+                                        Text("...")
+                                    }
+                                }
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
@@ -1200,7 +1256,18 @@ struct HomeNavigationContent: View {
                                     .foregroundColor(Color(.label))
                                     .tracking(-0.43)
                                 Spacer()
-                                Text(chargeStateStore.isCharging ? eta.etaText : "...")
+                                Group {
+                                    if chargeStateStore.isCharging && eta.unifiedEtaMinutes != nil && !isInWarmUpPeriod {
+                                        Text(eta.etaText)
+                                    } else if chargeStateStore.isCharging {
+                                        LoadingDotsView(
+                                            font: .system(size: 17, weight: .regular),
+                                            color: Color(.secondaryLabel)
+                                        )
+                                    } else {
+                                        Text("...")
+                                    }
+                                }
                                     .font(.system(size: 17, weight: .regular))
                                     .foregroundColor(Color(.secondaryLabel))
                                     .tracking(-0.43)
@@ -2105,3 +2172,41 @@ struct EnhancedLogMessageRow: View {
     ContentView()
         .environmentObject(BatteryTrackingManager.shared)
 }
+
+// ===== BEGIN STABILITY-LOCKED: Loading Dots Component (do not edit) =====
+// MARK: - Loading Dots Component
+struct LoadingDotsView: View {
+    var text: String? = nil            // optional label prefix, e.g. "Calculating"
+    var font: Font                     // injected (e.g. .system(size: 57))
+    var color: Color                   // injected (e.g. Color(.label))
+    var dotCount: Int = 3
+    var period: TimeInterval = 0.4
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            // Static fallback
+            HStack(spacing: 2) {
+                if let text { Text(text) }
+                Text("…")
+            }
+            .font(font)
+            .foregroundColor(color)
+            .accessibilityLabel(Text(text ?? "Calculating") + Text("…"))
+        } else {
+            TimelineView(.periodic(from: .now, by: period)) { context in
+                let step = Int(context.date.timeIntervalSince1970 / period) % dotCount + 1
+                let dots = String(repeating: "·", count: step)
+                HStack(spacing: 2) {
+                    if let text { Text(text) }
+                    Text(dots)
+                }
+                .font(font)
+                .foregroundColor(color)
+                .accessibilityLabel(Text(text ?? "Calculating") + Text("…"))
+            }
+        }
+    }
+}
+// ===== END STABILITY-LOCKED: Loading Dots Component =====
