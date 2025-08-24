@@ -116,6 +116,12 @@ final class BatteryTrackingManager: ObservableObject {
     private var unplugGen: UInt64 = 0            // generation to cancel stale tasks
     private var unplugDebounceTask: Task<Void, Never>? = nil
     
+    // ===== BEGIN STABILITY-LOCKED: Percent-step foreground logger (do not edit) =====
+    private var lastLoggedBucket: Int = -1
+    private var lastLoggedAt: Date = .distantPast
+    private var forceSocPersistNext: Bool = false
+    // ===== END STABILITY-LOCKED: Percent-step foreground logger =====
+    
 
     
     // Public accessor for current smoothed watts (for Live Activity)
@@ -958,8 +964,12 @@ final class BatteryTrackingManager: ObservableObject {
         let batteryLevel = UIDevice.current.batteryLevel
         let isCharging = UIDevice.current.batteryState == .charging || UIDevice.current.batteryState == .full
         
-        // Only record if battery level is valid (not -1) AND device is charging
-        guard batteryLevel >= 0 && isCharging else { return }
+        // Only record if battery level is valid (not -1) AND device is charging, OR if we need to force SOC persist
+        guard batteryLevel >= 0 && (isCharging || forceSocPersistNext) else { return }
+        
+        // Reset the force flag before writing so we only force once
+        let shouldForceSoc = forceSocPersistNext
+        forceSocPersistNext = false
         
         let dataPoint = BatteryDataPoint(batteryLevel: batteryLevel, isCharging: isCharging)
         batteryDataPoints.append(dataPoint)
@@ -973,7 +983,36 @@ final class BatteryTrackingManager: ObservableObject {
         
         // Also record power sample for charging power chart
         recordPowerSample()
+        
+        // If this was a forced SOC persist, log it
+        if shouldForceSoc {
+            addToAppLogs("🪵 Request DB.soc (step/guard) — \(Int(batteryLevel * 100))% [foreground]")
+        }
     }
+    
+    // ===== BEGIN STABILITY-LOCKED: Percent-step foreground logger (do not edit) =====
+    /// Log an SoC DB row on integer % step changes, or at most every 15 minutes while in foreground.
+    /// This does NOT touch the DB directly; it sets a flag and routes through recordBatteryData().
+    @MainActor
+    func logPercentStepToDB(now: Date = Date()) {
+        let socPct = max(1, ChargeStateStore.shared.currentBatteryLevel)  // never write 0
+        let bucket = socPct            // set to (socPct/5*5) if you prefer 5% buckets
+        let timeGuard: TimeInterval = 15 * 60
+
+        let shouldWrite = (bucket != lastLoggedBucket) || (now.timeIntervalSince(lastLoggedAt) >= timeGuard)
+        guard shouldWrite else { return }
+
+        lastLoggedBucket = bucket
+        lastLoggedAt = now
+
+        // Route through the *existing* DB write path
+        addToAppLogs("🪵 Request DB.soc (step/guard) — \(socPct)% [foreground]")
+        forceSocPersistNext = true
+        recordBatteryData()            // this will see the flag and persist via the normal insert path
+    }
+    // ===== END STABILITY-LOCKED: Percent-step foreground logger =====
+    
+
     
     // MARK: - Power Sample Recording
     func recordPowerSample() {

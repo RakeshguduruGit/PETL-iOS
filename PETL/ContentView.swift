@@ -270,6 +270,8 @@ struct ContentView: View {
             let pct = max(0, min(100, Int(round(snap.level * 100))))
             UserDefaults.standard.set(pct, forKey: "petl.lastSocPct")
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "petl.lastSocTs")
+            // Write a DB SoC row on % step or time guard to cover discharge/idle in foreground
+            BatteryTrackingManager.shared.logPercentStepToDB()
             updateUI(with: snap)
         }
         // ===== END STABILITY-LOCKED: Continuous SoC caching =====
@@ -311,6 +313,7 @@ struct ContentView: View {
         }
         .onChange(of: phase) { newPhase in
             if newPhase == .active {
+                BatteryTrackingManager.shared.logPercentStepToDB()
                 // Defensive battery monitoring - ensure it's enabled when app becomes active
                 UIDevice.current.isBatteryMonitoringEnabled = true
                 
