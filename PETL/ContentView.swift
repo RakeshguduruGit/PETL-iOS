@@ -1571,6 +1571,9 @@ struct BatteryChartView: View {
     @StateObject private var vm = ChartsVM(trackingManager: BatteryTrackingManager.shared)
     @Environment(\.colorScheme) var colorScheme
     let recentSocUI: [ChargeRow] // Live UI frame buffer
+    // ===== BEGIN STABILITY-LOCKED: Chart refresh mechanism (do not edit) =====
+    @State private var chartRefreshToken = UUID()
+    // ===== END STABILITY-LOCKED: Chart refresh mechanism =====
     #if DEBUG
     @State private var lastAxisKey: String = ""
     #endif
@@ -1578,6 +1581,7 @@ struct BatteryChartView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                .id(chartRefreshToken)
 
                 // --- Battery (24h) ---
                 VStack(alignment: .leading, spacing: 12) {
@@ -1612,9 +1616,19 @@ struct BatteryChartView: View {
                 .cornerRadius(26)
                 .frame(width: 362)
             }
+            .id(chartRefreshToken)
             .padding(.horizontal, 16)
             .padding(.top, 12)
         }
+        // ===== BEGIN STABILITY-LOCKED: Chart refresh handlers (do not edit) =====
+        .onReceive(NotificationCenter.default.publisher(for: .petlDBWrote)) { _ in
+            // Force a SwiftUI rebuild so the charts re-query the DB immediately
+            chartRefreshToken = UUID()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .petlChartRefresh)) { _ in
+            chartRefreshToken = UUID()
+        }
+        // ===== END STABILITY-LOCKED: Chart refresh handlers =====
         .onAppear {
             // ChartsVM handles all subscriptions automatically
         }
