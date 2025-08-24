@@ -826,6 +826,10 @@ final class PETLOrchestrator {
         // Nudge charts immediately
         NotificationCenter.default.post(name: .petlDBWrote, object: nil, userInfo: ["kind":"final","value":socToPersist,"watts":lastKnownWatts,"ts":now])
         
+        // Cache last known SoC snapshot for cold-launch fallback
+        UserDefaults.standard.set(socToPersist, forKey: "petl.lastSocPct")
+        UserDefaults.standard.set(now.timeIntervalSince1970, forKey: "petl.lastSocTs")
+        
         // ===== BEGIN STABILITY-LOCKED: Chart tail anchor (do not edit) =====
         // Also append a 1s "tail" row so bar/bucket charts show the last value at NOW
         let tailTs = now.addingTimeInterval(1) // keep it next to 'now' but later

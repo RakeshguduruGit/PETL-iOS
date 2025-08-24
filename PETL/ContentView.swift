@@ -1449,6 +1449,20 @@ struct SimpleBatteryChart: View {
         merged.append(contentsOf: recent)
         merged.sort { $0.timestamp < $1.timestamp }
 
+        // Cold-launch fallback: synthesize from last cached SoC if history/UI are empty
+        if merged.isEmpty {
+            let lastPct = UserDefaults.standard.integer(forKey: "petl.lastSocPct")
+            let lastTsRaw = UserDefaults.standard.double(forKey: "petl.lastSocTs")
+            if lastPct > 0 {
+                let nowTs = Date()
+                let prevTs = nowTs.addingTimeInterval(-1)
+                let lvl = Float(lastPct) / 100.0
+                merged.append(BatteryDataPoint(batteryLevel: lvl, isCharging: false, timestamp: prevTs))
+                merged.append(BatteryDataPoint(batteryLevel: lvl, isCharging: false, timestamp: nowTs))
+                addToAppLogs("🧷 Synthesized last-known SoC \(lastPct)% for cold launch (no DB/UI data)")
+            }
+        }
+
         // 4) Pad the tail at 'now' so AreaMark never falls to 0 at the right edge
         if let last = merged.last, now.timeIntervalSince(last.timestamp) > 10 {
             merged.append(BatteryDataPoint(
@@ -1581,8 +1595,6 @@ struct BatteryChartView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                .id(chartRefreshToken)
-
                 // --- Battery (24h) ---
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Charging History")
@@ -1630,6 +1642,8 @@ struct BatteryChartView: View {
         }
         // ===== END STABILITY-LOCKED: Chart refresh handlers =====
         .onAppear {
+            // Ensure charts rebuild immediately on cold launch to include cached/synthesized last point
+            chartRefreshToken = UUID()
             // ChartsVM handles all subscriptions automatically
         }
     }
