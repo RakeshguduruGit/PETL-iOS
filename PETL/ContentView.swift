@@ -263,10 +263,16 @@ struct ContentView: View {
         .ignoresSafeArea(.all, edges: .all)
         // Removed aggressive polling timers as per blueprint
         // LiveActivityManager handles all Live Activity management
+        // ===== BEGIN STABILITY-LOCKED: Continuous SoC caching (do not edit) =====
         .onReceive(tracker.publisher) { snap in
             snapshot = snap
+            // Continuously cache last known SoC for cold-launch fallback
+            let pct = max(0, min(100, Int(round(snap.level * 100))))
+            UserDefaults.standard.set(pct, forKey: "petl.lastSocPct")
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "petl.lastSocTs")
             updateUI(with: snap)
         }
+        // ===== END STABILITY-LOCKED: Continuous SoC caching =====
         .onReceive(deviceSvc.$profile.compactMap { $0 }) { _ in
             updateBatteryStats()    // NEW: pick up model + capacity as soon as it publishes
         }
@@ -1462,6 +1468,23 @@ struct SimpleBatteryChart: View {
                 addToAppLogs("🧷 Synthesized last-known SoC \(lastPct)% for cold launch (no DB/UI data)")
             }
         }
+
+        // ===== BEGIN STABILITY-LOCKED: 0% tail repair (do not edit) =====
+        // If the last point is somehow 0%, try the cached SoC to avoid a visual drop
+        if let last = merged.last, last.batteryLevel <= 0 {
+            let cachedPct = UserDefaults.standard.integer(forKey: "petl.lastSocPct")
+            if cachedPct > 0 {
+                let lvl = Float(cachedPct) / 100.0
+                let nowTs = Date()
+                let prevTs = nowTs.addingTimeInterval(-1)
+                // Replace final 0% with cached level and add a 'now' point
+                _ = merged.popLast()
+                merged.append(BatteryDataPoint(batteryLevel: lvl, isCharging: false, timestamp: prevTs))
+                merged.append(BatteryDataPoint(batteryLevel: lvl, isCharging: false, timestamp: nowTs))
+                addToAppLogs("🧷 Repaired 0%% tail using cached SoC \(cachedPct)%%")
+            }
+        }
+        // ===== END STABILITY-LOCKED: 0% tail repair =====
 
         // 4) Pad the tail at 'now' so AreaMark never falls to 0 at the right edge
         if let last = merged.last, now.timeIntervalSince(last.timestamp) > 10 {
