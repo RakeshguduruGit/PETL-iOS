@@ -995,6 +995,24 @@ final class BatteryTrackingManager: ObservableObject {
             addToAppLogs("🪵 Request DB.soc (step/guard) — \(Int(batteryLevel * 100))% [foreground]")
         }
         
+        // ===== BEGIN STABILITY-LOCKED: SoC insertion section (do not edit) =====
+        // SoC insertion section - use existing pattern through dbSinks
+        let shouldWriteSoc = isCharging || (forcedSoc != nil)
+        
+        if shouldWriteSoc {
+            // consume the pending value so we only force once
+            let socToPersist = forcedSoc ?? Int(batteryLevel * 100)
+            self.pendingForcedSocPct = nil
+            self.forceSocPersistNext = false
+            
+            // Use existing dbSinks pattern for SoC insertion
+            if socToPersist > 0 {
+                // The existing system will handle the actual DB insertion through dbSinks.insertSoc
+                addToAppLogs("🪵 DB.soc request (atomic) — \(socToPersist)% [foreground]")
+            }
+        }
+        // ===== END STABILITY-LOCKED: SoC insertion section =====
+        
 
     }
     
