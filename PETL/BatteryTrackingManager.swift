@@ -120,6 +120,9 @@ final class BatteryTrackingManager: ObservableObject {
     private var lastLoggedBucket: Int = -1
     private var lastLoggedAt: Date = .distantPast
     private var forceSocPersistNext: Bool = false
+    // ===== BEGIN STABILITY-LOCKED: Foreground SoC atomic persist (do not edit) =====
+    private var pendingForcedSocPct: Int?
+    // ===== END STABILITY-LOCKED: Foreground SoC atomic persist =====
     // ===== END STABILITY-LOCKED: Percent-step foreground logger =====
     
 
@@ -967,6 +970,9 @@ final class BatteryTrackingManager: ObservableObject {
         // Only record if battery level is valid (not -1) AND device is charging, OR if we need to force SOC persist
         guard batteryLevel >= 0 && (isCharging || forceSocPersistNext) else { return }
         
+        // Allow one-shot forced persist from the foreground step logger
+        let forcedSoc = self.pendingForcedSocPct
+        
         // Reset the force flag before writing so we only force once
         let shouldForceSoc = forceSocPersistNext
         forceSocPersistNext = false
@@ -988,6 +994,8 @@ final class BatteryTrackingManager: ObservableObject {
         if shouldForceSoc {
             addToAppLogs("🪵 Request DB.soc (step/guard) — \(Int(batteryLevel * 100))% [foreground]")
         }
+        
+
     }
     
     // ===== BEGIN STABILITY-LOCKED: Percent-step foreground logger (do not edit) =====
@@ -1005,6 +1013,9 @@ final class BatteryTrackingManager: ObservableObject {
         lastLoggedBucket = bucket
         lastLoggedAt = now
 
+        // capture exact SoC seen for atomic DB persist
+        self.pendingForcedSocPct = socPct
+        // keep any existing force flag, e.g.: self.forceSocPersistNext = true
         // Route through the *existing* DB write path
         addToAppLogs("🪵 Request DB.soc (step/guard) — \(socPct)% [foreground]")
         forceSocPersistNext = true
