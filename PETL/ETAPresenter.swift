@@ -2,8 +2,13 @@ import Combine
 import Foundation
 
 final class ETAPresenter: ObservableObject {
-    // Unified ETA from orchestrator ticks; always prefer this when available
-    @Published private(set) var unifiedEtaMinutes: Int? = nil
+    // ===== BEGIN STABILITY-LOCKED: ETA smoothing and session steps (do not edit) =====
+    private struct StepPoint { let ts: Date; let soc: Int }
+    private var stepPoints: [StepPoint] = []
+    @Published public private(set) var unifiedEtaMinutes: Int?
+    private var lastUnifiedEta: Int?
+    private let maxPoints = 6
+    // ===== END STABILITY-LOCKED: ETA smoothing and session steps =====
 
     // Housekeeping
     private var cancellables = Set<AnyCancellable>()
@@ -32,6 +37,45 @@ final class ETAPresenter: ObservableObject {
             }
             .store(in: &cancellables)
     }
+
+    // ===== BEGIN STABILITY-LOCKED: ETA ingestion (do not edit) =====
+    @MainActor
+    public func ingestSnapshot(levelPct: Int, isCharging: Bool, ts: Date = Date()) {
+        guard isCharging else {
+            stepPoints.removeAll()
+            unifiedEtaMinutes = nil
+            lastUnifiedEta = nil
+            return
+        }
+        // Append only on SoC change
+        if let last = stepPoints.last, last.soc == levelPct { return }
+        stepPoints.append(StepPoint(ts: ts, soc: levelPct))
+        if stepPoints.count > maxPoints { stepPoints.removeFirst(stepPoints.count - maxPoints) }
+
+        guard stepPoints.count >= 2 else {
+            unifiedEtaMinutes = nil
+            return
+        }
+        let pts = stepPoints.suffix(min(3, stepPoints.count))
+        guard let first = pts.first, let last = pts.last, last.ts > first.ts else {
+            unifiedEtaMinutes = nil
+            return
+        }
+        let dSoc = Double(last.soc - first.soc)
+        let dMin = max(1.0, last.ts.timeIntervalSince(first.ts) / 60.0)
+        let ratePctPerMin = max(0.01, dSoc / dMin)
+
+        let remainingPct = max(0.0, Double(100 - last.soc))
+        var eta = Int((remainingPct / ratePctPerMin).rounded())
+
+        // Clamp increases, let decreases flow
+        if let prev = lastUnifiedEta, eta > prev {
+            eta = min(prev + 2, eta)
+        }
+        lastUnifiedEta = eta
+        unifiedEtaMinutes = eta
+    }
+    // ===== END STABILITY-LOCKED: ETA ingestion =====
 
     /// Fallback ETA if no orchestrator value has been seen yet.
     /// - Parameters:

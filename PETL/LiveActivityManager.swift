@@ -153,6 +153,10 @@ final class LiveActivityManager {
     private let minEtaDeltaMinutes: Int = 2
     private var lastContentState: PETLLiveActivityAttributes.ContentState?
     
+    // ===== BEGIN STABILITY-LOCKED: LA sequencing (do not edit) =====
+    private var lastSeq: Int = 0
+    // ===== END STABILITY-LOCKED: LA sequencing =====
+    
     private static var isConfigured = false
     private static var didForceFirstPushThisSession = false
     
@@ -413,6 +417,16 @@ final class LiveActivityManager {
     
     #if DEBUG
     func handleRemotePayload(_ json: [AnyHashable: Any]) {
+        // Sequence guard: ignore duplicates/out-of-order payloads
+        if let seqAny = json["seq"],
+           let seq = (seqAny as? Int) ?? Int((seqAny as? String) ?? "") {
+            if seq <= lastSeq {
+                addToAppLogs("↪️ Drop LA payload (seq=\(seq) <= lastSeq=\(lastSeq))")
+                return
+            }
+            lastSeq = seq
+        }
+        
         // 1. Parse watts and ETA from payload
         let payloadWatts: Double = {
             if let w = json["watts"] as? Double { return w }
@@ -447,13 +461,17 @@ final class LiveActivityManager {
 
         addToAppLogs("🟦 LA update allowed — watts=\(String(format: "%.1f", wattsValue))W eta=\(etaMinutes)m")
         
-        // Sanitize zero payloads during active charge by falling back to last-known content
+        // Sanitize zeros while charging by falling back to last known values
         let chargingNow = ChargeStateStore.shared.isCharging
         var wattsForUpdate = max(0.0, payloadWatts)
-        var etaForUpdate = max(0, payloadEtaMinutes)
+        var etaForUpdate   = max(0,    payloadEtaMinutes)
         if chargingNow {
             if wattsForUpdate == 0, let last = lastContentState { wattsForUpdate = max(last.watts, 5.0) }
-            if etaForUpdate == 0, let last = lastContentState { etaForUpdate = max(last.timeToFullMinutes, 1) }
+            if etaForUpdate   == 0, let last = lastContentState { etaForUpdate   = max(last.timeToFullMinutes, 1) }
+        }
+        // Clamp ETA increases (allow decreases freely)
+        if let prevETA = lastContentState?.timeToFullMinutes, etaForUpdate > prevETA {
+            etaForUpdate = min(prevETA + 2, etaForUpdate)
         }
         addToAppLogs("🟦 LA update allowed — watts=\(String(format: "%.1f", wattsForUpdate))W eta=\(etaForUpdate)m")
         
