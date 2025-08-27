@@ -296,6 +296,10 @@ final class LiveActivityManager {
         lastPush = .distantPast
         lastRichState = nil
         Self.didForceFirstPushThisSession = false
+        // ===== BEGIN STABILITY-LOCKED: LA sequencing reset (do not edit) =====
+        lastSeq = 0
+        lastRemoteSeq = 0
+        // ===== END STABILITY-LOCKED: LA sequencing reset =====
     }
     
     private var didStartThisSession = false
@@ -427,6 +431,12 @@ final class LiveActivityManager {
             lastSeq = seq
         }
         
+        // Optional: Filter sim payloads to keep LA clean
+        if json["simWatts"] != nil {
+            addToAppLogs("↪️ Drop LA payload — simWatts present")
+            return
+        }
+        
         // 1. Parse watts and ETA from payload
         let payloadWatts: Double = {
             if let w = json["watts"] as? Double { return w }
@@ -458,8 +468,6 @@ final class LiveActivityManager {
         lastAllowedUpdateAt = now
         lastAllowedWatts = wattsValue
         lastAllowedETA = etaMinutes
-
-        addToAppLogs("🟦 LA update allowed — watts=\(String(format: "%.1f", wattsValue))W eta=\(etaMinutes)m")
         
         // Sanitize zeros while charging by falling back to last known values
         let chargingNow = ChargeStateStore.shared.isCharging
@@ -505,6 +513,38 @@ final class LiveActivityManager {
                 return
             }
             osLogger.info("🔄 Remote update received (seq=\(seq))")
+            
+            // Build content state from sanitized values
+            let contentState = PETLLiveActivityAttributes.ContentState(
+                soc: ChargeStateStore.shared.currentBatteryLevel,
+                watts: wattsForUpdate,
+                updatedAt: Date(),
+                isCharging: chargingNow,
+                timeToFullMinutes: etaForUpdate,
+                expectedFullDate: Date().addingTimeInterval(Double(etaForUpdate * 60)),
+                chargingRate: String(format: "%.1fW", wattsForUpdate),
+                batteryLevel: Int(Double(ChargeStateStore.shared.currentBatteryLevel) / 100.0),
+                estimatedWattage: String(format: "%.1fW", wattsForUpdate)
+            )
+            
+            // Update Live Activity
+            let isForeground = UIApplication.shared.applicationState == .active
+            if isForeground {
+                Task {
+                    for activity in Activity<PETLLiveActivityAttributes>.activities {
+                        await activity.update(using: contentState)
+                    }
+                }
+            } else {
+                for activity in Activity<PETLLiveActivityAttributes>.activities {
+                    #if DEBUG
+                    OneSignalClient.shared.updateLiveActivityRemote(activityId: activity.id, state: contentState)
+                    #endif
+                }
+            }
+            
+            // Persist the state we just sent
+            self.lastContentState = contentState
 
         case "end":
             if !BatteryTrackingManager.shared.isCharging {
@@ -1021,6 +1061,10 @@ func startActivity(reason: LAStartReason) async {
         Self.didForceFirstPushThisSession = false
         self.lastPush = nil
         self.lastPushedMinutes = nil
+        // ===== BEGIN STABILITY-LOCKED: LA sequencing reset (do not edit) =====
+        lastSeq = 0
+        lastRemoteSeq = 0
+        // ===== END STABILITY-LOCKED: LA sequencing reset =====
 
         addToAppLogs("🛑 Activity ended - source: \(reason)")
         
