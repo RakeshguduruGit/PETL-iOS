@@ -416,6 +416,9 @@ struct ContentView: View {
     
     // MARK: - Advanced Charging Analytics Methods
     
+    // ===== BEGIN STABILITY-LOCKED: LA sequencing (do not edit) =====
+    @State private var laSeq: Int = 0
+    // ===== END STABILITY-LOCKED: LA sequencing =====
     // Real-time charging rate calculation variables
     @State private var previousBatteryLevel: Float = 0.0
     @State private var lastBatteryCheckTime: Date = Date()
@@ -684,7 +687,10 @@ struct ContentView: View {
     
     private func startChargingActivity() {
         // Delegate to LiveActivityManager
-        LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"])
+        var payload: [String: Any] = ["batteryState": "charging"]
+        laSeq += 1
+        payload["seq"] = laSeq
+        LiveActivityManager.shared.handleRemotePayload(payload)
         
         // Update UI state
         DispatchQueue.main.async {
@@ -692,10 +698,13 @@ struct ContentView: View {
             self.logMessages.append("🔌 Live Activity start requested")
         }
     }
-    
+
     private func endChargingActivity() {
         // Delegate to LiveActivityManager
-        LiveActivityManager.shared.handleRemotePayload(["batteryState": "unplugged"])
+        var payload: [String: Any] = ["batteryState": "unplugged"]
+        laSeq += 1
+        payload["seq"] = laSeq
+        LiveActivityManager.shared.handleRemotePayload(payload)
         
         // Update UI state
         DispatchQueue.main.async {
@@ -817,6 +826,9 @@ struct ContentView: View {
         
         // Add data point to tracking manager
         BatteryTrackingManager.shared.recordBatteryData()
+        // ===== BEGIN STABILITY-LOCKED: ETA Presenter ingestion (do not edit) =====
+        eta.ingestSnapshot(levelPct: chargeStateStore.currentBatteryLevel, isCharging: snap.isCharging, ts: Date())
+        // ===== END STABILITY-LOCKED: ETA Presenter ingestion =====
         
         // Update Live Activity whenever it's running (charging or not),
         // because this is now the only place that owns analytics.
@@ -1502,6 +1514,8 @@ struct SimpleBatteryChart: View {
         // 2a) Recent from UI live tail (last 30 minutes) with outlier clamp
         var recentUI: [BatteryDataPoint] = []
         for row in recentSocUI.sorted(by: { $0.ts < $1.ts }) {
+            // Ignore simulated UI samples in the chart
+            if row.src == "sim" { continue }
             let dataPoint = BatteryDataPoint(
                 batteryLevel: Float(row.soc) / 100.0,
                 isCharging: row.isCharging,

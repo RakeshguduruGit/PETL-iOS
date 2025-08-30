@@ -135,6 +135,9 @@ struct PETLApp: App {
 class AppDelegate: NSObject, UIApplicationDelegate {
     private var backgroundTaskScheduler: BackgroundTaskScheduler?
     private let appLogger = Logger(subsystem: "com.petl.app", category: "launch")
+    // ===== BEGIN STABILITY-LOCKED: LA sequencing (do not edit) =====
+    private var laSeq: Int = 0
+    // ===== END STABILITY-LOCKED: LA sequencing =====
     
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         
@@ -151,7 +154,12 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         NotificationCenter.default.addObserver(forName: .petlSessionStarted, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 addToAppLogs("⚡️ Charging session STARTED")
-                LiveActivityManager.shared.handleRemotePayload(["batteryState": "charging"]) // idempotent start/update
+                // ===== BEGIN STABILITY-LOCKED: LA sequencing (do not edit) =====
+                var laStartPayload: [String: Any] = ["batteryState": "charging"]
+                self?.laSeq += 1
+                laStartPayload["seq"] = self?.laSeq
+                LiveActivityManager.shared.handleRemotePayload(laStartPayload) // idempotent start/update
+                // ===== END STABILITY-LOCKED: LA sequencing =====
                 if UIApplication.shared.applicationState == .active {
                     PETLOrchestrator.shared.startForegroundLoop()
                 }
@@ -380,9 +388,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
     
     func handleLiveActivityNotification(_ data: [String: Any]) {
-        // Forward OneSignal payload to LiveActivityManager
+        // Forward OneSignal payload to LiveActivityManager with sequencing
         Task { @MainActor in
-            LiveActivityManager.shared.handleRemotePayload(data)
+            // ===== BEGIN STABILITY-LOCKED: LA sequencing (do not edit) =====
+            var payload = data
+            laSeq += 1
+            payload["seq"] = laSeq
+            LiveActivityManager.shared.handleRemotePayload(payload)
+            // ===== END STABILITY-LOCKED: LA sequencing =====
         }
     }
     
@@ -412,15 +425,16 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 return
             }
 
-            // Update Live Activity from server state
-            let newState = PETLLiveActivityAttributes.ContentState(
-                soc: max(0, soc),
-                watts: max(0.0, watts),
-                updatedAt: Date()
-            )
-            for activity in Activity<PETLLiveActivityAttributes>.activities {
-                await activity.update(using: newState)
-            }
+            // ===== BEGIN STABILITY-LOCKED: LA sequencing (do not edit) =====
+            // Route through LiveActivityManager for sanitization & sequencing
+            var payload: [String: Any] = [
+                "soc": max(0, soc),
+                "watts": max(0.0, watts)
+            ]
+            laSeq += 1
+            payload["seq"] = laSeq
+            LiveActivityManager.shared.handleRemotePayload(payload)
+            // ===== END STABILITY-LOCKED: LA sequencing =====
 
             // Seed orchestrator so local countdown between pushes stays accurate
             await PETLOrchestrator.shared.seedFromServer(soc: soc, watts: watts)

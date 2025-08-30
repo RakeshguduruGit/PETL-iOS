@@ -8,6 +8,10 @@ final class ETAPresenter: ObservableObject {
     @Published public private(set) var unifiedEtaMinutes: Int?
     private var lastUnifiedEta: Int?
     private let maxPoints = 6
+    // ===== BEGIN STABILITY-LOCKED: Orchestrator ETA preference (do not edit) =====
+    private var lastOrchestratorEtaAt: Date = .distantPast
+    private let orchestratorPriorityWindow: TimeInterval = 90 // seconds
+    // ===== END STABILITY-LOCKED: Orchestrator ETA preference =====
     // ===== END STABILITY-LOCKED: ETA smoothing and session steps =====
 
     // Housekeeping
@@ -24,6 +28,7 @@ final class ETAPresenter: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] eta in
                 self?.unifiedEtaMinutes = eta
+                self?.lastOrchestratorEtaAt = Date()
             }
             .store(in: &cancellables)
 
@@ -67,12 +72,18 @@ final class ETAPresenter: ObservableObject {
 
         let remainingPct = max(0.0, Double(100 - last.soc))
         var eta = Int((remainingPct / ratePctPerMin).rounded())
+        eta = max(1, min(eta, 240))
 
         // Clamp increases, let decreases flow
         if let prev = lastUnifiedEta, eta > prev {
             eta = min(prev + 2, eta)
         }
         lastUnifiedEta = eta
+        // Prefer orchestrator ETA if we've received one within the priority window
+        if Date().timeIntervalSince(lastOrchestratorEtaAt) < orchestratorPriorityWindow {
+            // Keep clamped internal value for continuity, but don't override orchestrator display yet
+            return
+        }
         unifiedEtaMinutes = eta
     }
     // ===== END STABILITY-LOCKED: ETA ingestion =====
