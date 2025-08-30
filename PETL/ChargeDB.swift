@@ -55,6 +55,18 @@ final class ChargeDB {
           CREATE INDEX IF NOT EXISTS idx_session ON charge_log(session_id);
         """)
         
+        // Create ChargingSessions table
+        _ = exec("""
+          CREATE TABLE IF NOT EXISTS ChargingSessions (
+            id TEXT PRIMARY KEY,
+            startTime REAL,
+            endTime REAL,
+            startPercentage INTEGER,
+            endPercentage INTEGER
+          );
+          CREATE INDEX IF NOT EXISTS idx_charging_sessions_end_time ON ChargingSessions(endTime);
+        """)
+        
         // Check if watts column exists
         var st: OpaquePointer?
         sqlite3_prepare_v2(db, "PRAGMA table_info(charge_log)", -1, &st, nil)
@@ -165,6 +177,55 @@ final class ChargeDB {
     func trim(olderThanDays days: Int = 30) {
         let cutoff = Date().addingTimeInterval(-Double(days) * 86400).timeIntervalSince1970
         _ = exec("DELETE FROM charge_log WHERE ts < \(cutoff)")
+    }
+    
+    // MARK: - Charging Sessions Support
+    @available(*, unavailable, message: "Use dbSinks pattern instead.")
+    func insertChargingSession(id: String, startTime: Date, endTime: Date, startPercentage: Int, endPercentage: Int) {
+        fatalError("stability-locked: Use dbSinks.insertChargingSession instead")
+    }
+    
+    // Internal method for dbSinks only
+    internal func _insertChargingSessionLocked(id: String, startTime: Date, endTime: Date, startPercentage: Int, endPercentage: Int) {
+        var st: OpaquePointer?
+        sqlite3_prepare_v2(db, "INSERT INTO ChargingSessions (id, startTime, endTime, startPercentage, endPercentage) VALUES (?, ?, ?, ?, ?)", -1, &st, nil)
+        defer { sqlite3_finalize(st) }
+        sqlite3_bind_text(st, 1, id, -1, nil)
+        sqlite3_bind_double(st, 2, startTime.timeIntervalSince1970)
+        sqlite3_bind_double(st, 3, endTime.timeIntervalSince1970)
+        sqlite3_bind_int(st, 4, Int32(startPercentage))
+        sqlite3_bind_int(st, 5, Int32(endPercentage))
+        sqlite3_step(st)
+    }
+    
+    func queryChargingSessions(limit: Int = 50, offset: Int = 0) -> [ChargingSession] {
+        var sessions: [ChargingSession] = []
+        var st: OpaquePointer?
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60).timeIntervalSince1970
+        
+        sqlite3_prepare_v2(db, "SELECT * FROM ChargingSessions WHERE endTime >= ? ORDER BY endTime DESC LIMIT ? OFFSET ?", -1, &st, nil)
+        defer { sqlite3_finalize(st) }
+        
+        sqlite3_bind_double(st, 1, cutoff)
+        sqlite3_bind_int(st, 2, Int32(limit))
+        sqlite3_bind_int(st, 3, Int32(offset))
+        
+        while sqlite3_step(st) == SQLITE_ROW {
+            let id = String(cString: sqlite3_column_text(st, 0))
+            let startTime = Date(timeIntervalSince1970: sqlite3_column_double(st, 1))
+            let endTime = Date(timeIntervalSince1970: sqlite3_column_double(st, 2))
+            let startPercentage = Int(sqlite3_column_int(st, 3))
+            let endPercentage = Int(sqlite3_column_int(st, 4))
+            
+            sessions.append(ChargingSession(
+                id: UUID(uuidString: id) ?? UUID(),
+                startTime: startTime,
+                endTime: endTime,
+                startPercentage: startPercentage,
+                endPercentage: endPercentage
+            ))
+        }
+        return sessions
     }
     
     // One-time cleanup for legacy zero SOC rows

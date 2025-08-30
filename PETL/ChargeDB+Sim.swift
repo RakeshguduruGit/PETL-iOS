@@ -82,4 +82,20 @@ extension ChargeDB {
         append(row)
         return true
     }
+    
+    /// Insert a charging session using the internal API.
+    /// - Parameters:
+    ///   - session: The charging session to insert
+    @discardableResult
+    func insertSimulatedChargingSession(_ session: ChargingSession) -> Bool {
+        _insertChargingSessionLocked(
+            id: session.id.uuidString,
+            startTime: session.startTime,
+            endTime: session.endTime,
+            startPercentage: session.startPercentage,
+            endPercentage: session.endPercentage
+        )
+        _simLogger.info("📊 append(Session) \(session.durationMinutes)m (\(session.startPercentage)% → \(session.endPercentage)%)")
+        return true
+    }
 }

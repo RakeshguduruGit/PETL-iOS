@@ -53,6 +53,19 @@ struct PowerSample: Identifiable {
     }
 }
 
+// MARK: - Charging Session Model
+struct ChargingSession: Identifiable {
+    let id: UUID
+    let startTime: Date
+    let endTime: Date
+    let startPercentage: Int
+    let endPercentage: Int
+
+    var durationMinutes: Int {
+        Int(endTime.timeIntervalSince(startTime) / 60)
+    }
+}
+
 // MARK: - Battery Tracking Manager
 @MainActor
 final class BatteryTrackingManager: ObservableObject {
@@ -124,6 +137,10 @@ final class BatteryTrackingManager: ObservableObject {
     private var pendingForcedSocPct: Int?
     // ===== END STABILITY-LOCKED: Foreground SoC atomic persist =====
     // ===== END STABILITY-LOCKED: Percent-step foreground logger =====
+    
+    // MARK: - Charging Session Tracking
+    private var currentSessionStartTime: Date?
+    private var currentSessionStartPercentage: Int?
     
 
     
@@ -1255,7 +1272,31 @@ final class BatteryTrackingManager: ObservableObject {
                 self.handleReplugDetected()
             }
             
+            // Track charging session changes
+            let oldChargingState = self.isCharging
             self.isCharging = newState
+            
+            if newState != oldChargingState {
+                if newState {
+                    // Started charging
+                    self.currentSessionStartTime = Date()
+                    self.currentSessionStartPercentage = Int(UIDevice.current.batteryLevel * 100)
+                } else if let start = self.currentSessionStartTime,
+                          let startPct = self.currentSessionStartPercentage {
+                    // Ended charging - log session (DB persistence will be added later)
+                    let session = ChargingSession(
+                        id: UUID(),
+                        startTime: start,
+                        endTime: Date(),
+                        startPercentage: startPct,
+                        endPercentage: Int(UIDevice.current.batteryLevel * 100)
+                    )
+                    self.addToAppLogs("📊 Charging session ended: \(session.durationMinutes)m (\(session.startPercentage)% → \(session.endPercentage)%)")
+                    self.currentSessionStartTime = nil
+                    self.currentSessionStartPercentage = nil
+                }
+            }
+            
             if newState {
                 self.handleChargeBegan()
             } else {
@@ -1299,6 +1340,9 @@ final class BatteryTrackingManager: ObservableObject {
         }
         contentLogger.info("\(s)")
     }
+    
+    // Note: Session persistence will be implemented later to avoid stability guardrail issues
+    // For now, sessions are logged but not persisted to DB
 }
 
 extension BatteryTrackingManager {

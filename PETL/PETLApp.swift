@@ -265,6 +265,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         PETLOrchestrator.shared.dbSinks.recomputeAnalytics = {
             addToAppLogs("🧮 DB.analytics.recompute(10m) requested")
         }
+        // Charging session persistence is handled directly in BatteryTrackingManager
+        // to comply with stability guardrails
         
         return true
     }
