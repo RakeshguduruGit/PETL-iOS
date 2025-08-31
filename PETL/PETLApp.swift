@@ -187,7 +187,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         NotificationCenter.default.addObserver(
             forName: UIDevice.batteryStateDidChangeNotification,
             object: nil, queue: .main
-        ) { [weak self] _ in
+        ) { _ in
             Task { @MainActor in
                 let s = ChargeStateStore.shared.currentState
                 print("🔌 Battery state changed (launch observer): \(s.rawValue)")
@@ -326,22 +326,21 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         OneSignal.Notifications.requestPermission({ [weak self] accepted in
             addToAppLogs("🔔 User accepted notifications: \(accepted)")
             print("🔔 User accepted notifications: \(accepted)")
-                            self?.appLogger.info("🔔 User accepted notifications: \(accepted)")
-            
+            self?.appLogger.info("🔔 User accepted notifications: \(accepted)")
+
             // Check OneSignal status after permission
             if let playerId = OneSignal.User.pushSubscription.id {
                 addToAppLogs("✅ OneSignal Player ID: \(playerId)")
                 print("✅ OneSignal Player ID: \(playerId)")
                 self?.appLogger.info("✅ OneSignal Player ID: \(playerId)")
-                
+
                 addToAppLogs("📊 Player ID Length: \(playerId.count) characters")
                 print("📊 Player ID Length: \(playerId.count) characters")
-                self?.appLogger.info("📊 Player ID Length: \(playerId.count) characters")
-                
+
                 // Store Player ID for REST API self-pings
                 UserDefaults.standard.set(playerId, forKey: "OneSignalPlayerID")
                 addToAppLogs("💾 OneSignal Player ID stored for self-pings")
-                
+
                 // Check if it's a valid UUID (36 characters, UUID format)
                 let isValidUUID = playerId.range(of: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", options: .regularExpression) != nil
                 addToAppLogs("🔍 Player ID Format: \(isValidUUID ? "Valid UUID" : "Invalid UUID format")")
@@ -352,23 +351,23 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 print("❌ OneSignal Player ID not available")
                 self?.appLogger.error("❌ OneSignal Player ID not available")
             }
-            
+
             // Check subscription status
             let subscriptionStatus = OneSignal.User.pushSubscription.optedIn
             print("📋 Subscription Status: \(subscriptionStatus ? "Opted In" : "Not Opted In")")
             self?.appLogger.info("📋 Subscription Status: \(subscriptionStatus ? "Opted In" : "Not Opted In")")
-            
+
             // Check notification types
             let notificationTypes = OneSignal.User.pushSubscription.optedIn
             print("🔔 Notification Types: \(notificationTypes ? "Subscribed" : "Not Subscribed")")
             self?.appLogger.info("🔔 Notification Types: \(notificationTypes ? "Subscribed" : "Not Subscribed")")
-            
+
             // Log subscription ID
             if let subscriptionId = OneSignal.User.pushSubscription.id {
                 print("🆔 OneSignal Subscription ID: \(subscriptionId)")
                 self?.appLogger.info("🆔 OneSignal Subscription ID: \(subscriptionId)")
             }
-            
+
         }, fallbackToSettings: true)
         
         // Set up notification handlers for Live Activity management with error handling
@@ -702,20 +701,18 @@ final class ChargingSessionManager {
 
     @MainActor
     private func evaluate(initial: Bool) {
-        let isCharging = ChargeStateStore.shared.isCharging
         switch ChargeStateStore.shared.currentState {
         case .charging, .full:
             if state == .idle || state == .ended {
                 transition(to: .probing)
                 probeTimer?.invalidate()
-                probeTimer = Timer.scheduledTimer(withTimeInterval: hysteresisSeconds, repeats: false) { [weak self] _ in
+                probeTimer = Timer.scheduledTimer(withTimeInterval: hysteresisSeconds, repeats: false) { _ in
                     Task { @MainActor in
-                        guard let self else { return }
                         if ChargeStateStore.shared.isCharging {
-                            self.transition(to: .active)
+                            ChargingSessionManager.shared.transition(to: .active)
                             NotificationCenter.default.post(name: .petlSessionStarted, object: nil)
                         } else {
-                            self.transition(to: .idle)
+                            ChargingSessionManager.shared.transition(to: .idle)
                         }
                     }
                 }
