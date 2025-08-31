@@ -125,7 +125,7 @@ actor ActivityCoordinator {
     
     func stopIfNeeded() async {
         guard let activity = current else { return }
-        await activity.end(dismissalPolicy: .immediate)
+        await activity.end(activity.content, dismissalPolicy: .immediate)
         current = nil
         print("🛑 Ended Live Activity")
     }
@@ -337,8 +337,8 @@ final class LiveActivityManager {
         } else {
             for activity in Activity<PETLLiveActivityAttributes>.activities {
                 #if DEBUG
-            OneSignalClient.shared.updateLiveActivityRemote(activityId: activity.id, state: state)
-            #endif
+                OneSignalClient.shared.updateLiveActivityRemote(activityId: activity.id, state: state)
+                #endif
             }
             addToAppLogs("📡 Live Activity update queued remotely (background)")
         }
@@ -351,15 +351,15 @@ final class LiveActivityManager {
         if isForeground {
             Task {
                 for activity in Activity<PETLLiveActivityAttributes>.activities {
-                    await activity.end(dismissalPolicy: .immediate)
+                    await activity.end(activity.content, dismissalPolicy: .immediate)
                 }
                 addToAppLogs("🛑 Live Activity ended locally (foreground)")
             }
         } else {
             for activity in Activity<PETLLiveActivityAttributes>.activities {
                 #if DEBUG
-            OneSignalClient.shared.endLiveActivityRemote(activityId: activity.id)
-            #endif
+                OneSignalClient.shared.endLiveActivityRemote(activityId: activity.id)
+                #endif
             }
             addToAppLogs("📡 Live Activity end queued remotely (background)")
         }
@@ -674,7 +674,7 @@ final class LiveActivityManager {
         addToAppLogs("🧹 Cleaning up duplicates: \(list.count)")
         for act in list {
             if let keepId, act.id == keepId { continue }
-            Task { await act.end(dismissalPolicy: .immediate) }
+            Task { await act.end(act.content, dismissalPolicy: .immediate) }
         }
     }
     
@@ -877,24 +877,20 @@ func startActivity(reason: LAStartReason) async {
             addToAppLogs("🏁 LA final state detected (≤1m) — ending now")
             #if canImport(ActivityKit)
             for activity in Activity<PETLLiveActivityAttributes>.activities {
-                do {
-                    let final = PETLLiveActivityAttributes.ContentState(
-                        soc: state.soc,
-                        watts: 0.0,
-                        updatedAt: Date(),
-                        isCharging: false,
-                        timeToFullMinutes: 0,
-                        expectedFullDate: Date(),
-                        chargingRate: "0.0W",
-                        batteryLevel: state.batteryLevel,
-                        estimatedWattage: "0.0W"
-                    )
-                    await activity.update(using: final)
-                    try await activity.end(dismissalPolicy: .immediate)
-                    addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
-                } catch {
-                    addToAppLogs("❌ LA end error id=\(activity.id.prefix(6)) \(error.localizedDescription)")
-                }
+                let final = PETLLiveActivityAttributes.ContentState(
+                    soc: state.soc,
+                    watts: 0.0,
+                    updatedAt: Date(),
+                    isCharging: false,
+                    timeToFullMinutes: 0,
+                    expectedFullDate: Date(),
+                    chargingRate: "0.0W",
+                    batteryLevel: state.batteryLevel,
+                    estimatedWattage: "0.0W"
+                )
+                await activity.update(using: final)
+                await activity.end(activity.content, dismissalPolicy: .immediate)
+                addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
             }
             #endif
             return
@@ -970,12 +966,8 @@ func startActivity(reason: LAStartReason) async {
         if let id = currentActivityID,
            let a = Activity<PETLLiveActivityAttributes>.activities.first(where: { $0.id == id }) {
             BatteryTrackingManager.shared.addToAppLogsCritical("🧪 endActive(\(reason)) id=\(String(id.suffix(4)))")
-            do {
-                try await a.end(nil, dismissalPolicy: .immediate)
-                BatteryTrackingManager.shared.addToAppLogsCritical("✅ end done id=\(String(id.suffix(4)))")
-            } catch {
-                BatteryTrackingManager.shared.addToAppLogsCritical("❌ end failed id=\(String(id.suffix(4))): \(error.localizedDescription)")
-            }
+            await a.end(a.content, dismissalPolicy: .immediate)
+            BatteryTrackingManager.shared.addToAppLogsCritical("✅ end done id=\(String(id.suffix(4)))")
             // clear pointer if gone
             if Activity<PETLLiveActivityAttributes>.activities.first(where: { $0.id == id }) == nil {
                 currentActivityID = nil
@@ -991,24 +983,20 @@ func startActivity(reason: LAStartReason) async {
         updatesBlocked = true
         #if canImport(ActivityKit)
         for activity in Activity<PETLLiveActivityAttributes>.activities {
-            do {
-                let final = PETLLiveActivityAttributes.ContentState(
-                    soc: 0,
-                    watts: 0.0,
-                    updatedAt: Date(),
-                    isCharging: false,
-                    timeToFullMinutes: 0,
-                    expectedFullDate: Date(),
-                    chargingRate: "0.0W",
-                    batteryLevel: 0,
-                    estimatedWattage: "0.0W"
-                )
-                await activity.update(using: final)
-                try await activity.end(dismissalPolicy: .immediate)
-                addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
-            } catch {
-                addToAppLogs("❌ LA end error id=\(activity.id.prefix(6)) \(error.localizedDescription)")
-            }
+            let final = PETLLiveActivityAttributes.ContentState(
+                soc: 0,
+                watts: 0.0,
+                updatedAt: Date(),
+                isCharging: false,
+                timeToFullMinutes: 0,
+                expectedFullDate: Date(),
+                chargingRate: "0.0W",
+                batteryLevel: 0,
+                estimatedWattage: "0.0W"
+            )
+            await activity.update(using: final)
+            await activity.end(activity.content, dismissalPolicy: .immediate)
+            addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
         }
         #endif
 
@@ -1018,7 +1006,7 @@ func startActivity(reason: LAStartReason) async {
             try? await Task.sleep(nanoseconds: delay)
             let remaining = Activity<PETLLiveActivityAttributes>.activities.count
             addToAppLogs("🧪 endAll() verification: remaining=\(remaining)")
-            if remaining == 0 { 
+            if remaining == 0 {
                 addToAppLogs("✅ endAll() successful - all activities ended")
                 break
             }
@@ -1028,35 +1016,29 @@ func startActivity(reason: LAStartReason) async {
         let finalActivities = Activity<PETLLiveActivityAttributes>.activities
         if !finalActivities.isEmpty {
             addToAppLogs("⚠️ endAll() failsafe: \(finalActivities.count) activities still present, marking as stale")
-            
             for act in finalActivities {
                 var s = act.content.state
                 s.isCharging = false
                 s.timeToFullMinutes = 0
                 s.expectedFullDate = Date()
-
                 // Mark as stale so the system deprioritizes it immediately
                 let content = ActivityContent(state: s, staleDate: Date(), relevanceScore: 0)
-                do { 
-                    try await act.update(content) 
-                    addToAppLogs("✅ Final stale update sent for \(act.id)")
-                    // Try ending immediately after stale update
-                    try await act.end(dismissalPolicy: .immediate)
-                    addToAppLogs("✅ Final end attempt for \(act.id)")
-                } catch {
-                    addToAppLogs("⚠️ final stale update/end failed for \(act.id): \(error)")
-                }
+                await act.update(using: s)
+                addToAppLogs("✅ Final stale update sent for \(act.id)")
+                // Try ending immediately after stale update
+                await act.end(content, dismissalPolicy: .immediate)
+                addToAppLogs("✅ Final end attempt for \(act.id)")
             }
         }
 
         self.didStartThisSession = false
         self.isActive = false
         lastEndAt = Date()
-        
+
         retryStartTask?.cancel()
         retryStartTask = nil
         recentStartAt = nil
-        
+
         await ActivityCoordinator.shared.stopIfNeeded()
         Self.didForceFirstPushThisSession = false
         self.lastPush = nil
@@ -1067,14 +1049,13 @@ func startActivity(reason: LAStartReason) async {
         // ===== END STABILITY-LOCKED: LA sequencing reset =====
 
         addToAppLogs("🛑 Activity ended - source: \(reason)")
-        
+
         // Cancel background refresh since no activities remain
         if let appDelegate = UIApplication.shared.delegate as? AppDelegate {
             appDelegate.cancelRefresh()
         }
-        
+
         dumpActivities("afterEnd")
-        
         addToAppLogs("🧪 post-end activities: \(Activity<PETLLiveActivityAttributes>.activities.map{ $0.id }.joined(separator: ","))")
     }
     
