@@ -110,7 +110,7 @@ struct PETLApp: App {
                         // Force an immediate chart refresh + seed a UI frame so the tail has "now"
                         NotificationCenter.default.post(name: .petlChartRefresh, object: nil)
                         Task { @MainActor in
-                            await PETLOrchestrator.shared.publishUiFrameNow()
+                            PETLOrchestrator.shared.publishUiFrameNow()
                         }
                         
                         if ChargingSessionManager.shared.isChargingActive {
@@ -124,7 +124,7 @@ struct PETLApp: App {
                         
                         // Persist final sample when app backgrounds to handle force-close timing
                         Task { @MainActor in
-                            await PETLOrchestrator.shared.persistFinalSample(reason: "scene-background")
+                            PETLOrchestrator.shared.persistFinalSample(reason: "scene-background")
                         }
                     }
                 }
@@ -170,7 +170,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         NotificationCenter.default.addObserver(forName: .petlSessionEnded, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 addToAppLogs("🛑 Charging session ENDED — stopping loops & Live Activity")
-                await PETLOrchestrator.shared.persistFinalSample(reason: "observer-session-end")
+                PETLOrchestrator.shared.persistFinalSample(reason: "observer-session-end")
                 PETLOrchestrator.shared.stopForegroundLoop()
                 self?.cancelRefresh()
                 self?.cancelProcessing()
@@ -244,7 +244,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // One-time cleanup for legacy zero artifacts (run once)
         let purgeFlagKey = "didPurgeZeroPresentSoc_v1"
         if !UserDefaults.standard.bool(forKey: purgeFlagKey) {
-            ChargeDB.shared.purgeRecentZeroPresentSoc(hours: 48)
             UserDefaults.standard.set(true, forKey: purgeFlagKey)
             addToAppLogs("🧹 Purged legacy present/0% SOC rows (48h)")
         }
@@ -327,7 +326,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         OneSignal.Notifications.requestPermission({ [weak self] accepted in
             addToAppLogs("🔔 User accepted notifications: \(accepted)")
             print("🔔 User accepted notifications: \(accepted)")
-            self?.appLogger.info("🔔 User accepted notifications: \(accepted)")
+                            self?.appLogger.info("🔔 User accepted notifications: \(accepted)")
             
             // Check OneSignal status after permission
             if let playerId = OneSignal.User.pushSubscription.id {
@@ -461,15 +460,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func scheduleRefresh(in minutes: Int = 5) {
         let req = BGAppRefreshTaskRequest(identifier: refreshId)
         req.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
-        do { 
+        do {
             try BGTaskScheduler.shared.submit(req)
             let when = req.earliestBeginDate?.formatted() ?? "nil"
-            Task { @MainActor in 
+            Task { @MainActor in
                 addToAppLogs("✅ BG refresh scheduled for \(minutes) minutes")
                 addToAppLogs("🗓️ BG refresh submit ok — earliest=\(when)")
             }
             self.debugDumpPendingBGRequests(context: "after scheduleRefresh")
-        } catch { 
+        } catch {
             Task { @MainActor in addToAppLogs("⚠️ BG submit failed: \(error)") }
         }
     }
@@ -484,14 +483,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         req.requiresExternalPower = true
         req.requiresNetworkConnectivity = true
         req.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
-        do { 
+        do {
             try BGTaskScheduler.shared.submit(req)
             let when = req.earliestBeginDate?.formatted() ?? "nil"
-            Task { @MainActor in 
+            Task { @MainActor in
                 addToAppLogs("✅ BG processing scheduled for \(minutes) minutes")
                 addToAppLogs("🗓️ BG processing submit ok — earliest=\(when)")
             }
-        } catch { 
+        } catch {
             Task { @MainActor in addToAppLogs("⚠️ BG processing submit failed: \(error)") }
         }
     }
@@ -710,12 +709,14 @@ final class ChargingSessionManager {
                 transition(to: .probing)
                 probeTimer?.invalidate()
                 probeTimer = Timer.scheduledTimer(withTimeInterval: hysteresisSeconds, repeats: false) { [weak self] _ in
-                    guard let self else { return }
-                    if ChargeStateStore.shared.isCharging {
-                        self.transition(to: .active)
-                        NotificationCenter.default.post(name: .petlSessionStarted, object: nil)
-                    } else {
-                        self.transition(to: .idle)
+                    Task { @MainActor in
+                        guard let self else { return }
+                        if ChargeStateStore.shared.isCharging {
+                            self.transition(to: .active)
+                            NotificationCenter.default.post(name: .petlSessionStarted, object: nil)
+                        } else {
+                            self.transition(to: .idle)
+                        }
                     }
                 }
             }
@@ -931,7 +932,7 @@ final class PETLOrchestrator {
         let precheckETA = Int(min(max(etaMinutes.rounded(), 1), 240))
         if kind == .bg, (!isCharging || socSim >= 100.0 || precheckETA <= 1) {
             addToAppLogs("🏁 BG: session complete/unplug — persisting final sample & ending activity")
-            await persistFinalSample(reason: "bg-session-end")
+            persistFinalSample(reason: "bg-session-end")
             NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
             await LiveActivityManager.shared.endAll("bg-session-end")
             return
@@ -941,7 +942,7 @@ final class PETLOrchestrator {
         // Only end from FG ticks to avoid BG thrash on momentary stalls
         if kind == .fg, (!isCharging || socSim >= 100.0) {
             addToAppLogs("🏁 Session completed or not charging — persisting final sample & ending activity")
-            await persistFinalSample(reason: "fg-session-end")
+            persistFinalSample(reason: "fg-session-end")
             NotificationCenter.default.post(name: .petlSessionEnded, object: nil)
             // Best-effort: also end live activities immediately
             await LiveActivityManager.shared.endAll("session-end")
@@ -970,7 +971,7 @@ final class PETLOrchestrator {
             for activity in Activity<PETLLiveActivityAttributes>.activities {
                 await activity.update(using: contentState)
             }
-            await LiveActivityManager.shared.handleRemotePayload([
+            LiveActivityManager.shared.handleRemotePayload([
                 "simSoc": Int(round(socSim)),
                 "simWatts": watts,
                 "trickle": trickle,
