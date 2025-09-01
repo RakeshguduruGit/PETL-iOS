@@ -966,7 +966,8 @@ final class PETLOrchestrator {
                 addToAppLogs("⚠️ ETA mismatch LA=\(contentState.timeToFullMinutes) tick=\(clampedETA)")
             }
             for activity in Activity<PETLLiveActivityAttributes>.activities {
-                await activity.update(using: contentState)
+                let content = ActivityContent(state: contentState, staleDate: nil)
+                await activity.update(content)
             }
             LiveActivityManager.shared.handleRemotePayload([
                 "simSoc": Int(round(socSim)),
