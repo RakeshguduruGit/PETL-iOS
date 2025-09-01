@@ -71,7 +71,7 @@ actor ActivityCoordinator {
         }
             
             let initialState = await LiveActivityManager.shared.firstContent()
-            current = try await Activity.request(
+            current = try Activity.request(
                 attributes: PETLLiveActivityAttributes(),
                 content: ActivityContent(state: initialState, staleDate: Date().addingTimeInterval(3600)),
                 pushType: .token
@@ -103,7 +103,7 @@ actor ActivityCoordinator {
             // Fallback: no push token (card still shows; background updates just won't be remote)
             do {
                 let fallbackState = await LiveActivityManager.shared.firstContent()
-                current = try await Activity.request(
+                current = try Activity.request(
                     attributes: PETLLiveActivityAttributes(),
                     content: ActivityContent(state: fallbackState, staleDate: Date().addingTimeInterval(3600)),
                     pushType: nil
@@ -330,7 +330,8 @@ final class LiveActivityManager {
         if isForeground {
             Task {
                 for activity in Activity<PETLLiveActivityAttributes>.activities {
-                    await activity.update(using: state)
+                    let content = ActivityContent(state: state, staleDate: nil)
+                    await activity.update(content)
                 }
                 addToAppLogs("🔄 Live Activity updated locally (foreground)")
             }
@@ -532,7 +533,8 @@ final class LiveActivityManager {
             if isForeground {
                 Task {
                     for activity in Activity<PETLLiveActivityAttributes>.activities {
-                        await activity.update(using: contentState)
+                        let content = ActivityContent(state: contentState, staleDate: nil)
+                        await activity.update(content)
                     }
                 }
             } else {
@@ -888,8 +890,9 @@ func startActivity(reason: LAStartReason) async {
                     batteryLevel: state.batteryLevel,
                     estimatedWattage: "0.0W"
                 )
-                await activity.update(using: final)
-                await activity.end(activity.content, dismissalPolicy: .immediate)
+                let finalContent = ActivityContent(state: final, staleDate: nil)
+                await activity.update(finalContent)
+                await activity.end(finalContent, dismissalPolicy: .immediate)
                 addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
             }
             #endif
@@ -897,7 +900,8 @@ func startActivity(reason: LAStartReason) async {
         }
         
         for activity in Activity<PETLLiveActivityAttributes>.activities {
-            await activity.update(using: state)
+            let content = ActivityContent(state: state, staleDate: nil)
+            await activity.update(content)
         }
         self.lastContentState = state
         let message = "🔄 push level=\(Int(state.batteryLevel*100)) rate=\(state.chargingRate) time=\(state.timeToFullMinutes) min"
@@ -994,8 +998,9 @@ func startActivity(reason: LAStartReason) async {
                 batteryLevel: 0,
                 estimatedWattage: "0.0W"
             )
-            await activity.update(using: final)
-            await activity.end(activity.content, dismissalPolicy: .immediate)
+            let finalContent = ActivityContent(state: final, staleDate: nil)
+            await activity.update(finalContent)
+            await activity.end(finalContent, dismissalPolicy: .immediate)
             addToAppLogs("✅ LA end OK id=\(activity.id.prefix(6))")
         }
         #endif
@@ -1022,11 +1027,11 @@ func startActivity(reason: LAStartReason) async {
                 s.timeToFullMinutes = 0
                 s.expectedFullDate = Date()
                 // Mark as stale so the system deprioritizes it immediately
-                let content = ActivityContent(state: s, staleDate: Date(), relevanceScore: 0)
-                await act.update(using: s)
+                let updatedContent = ActivityContent(state: s, staleDate: Date(), relevanceScore: 0)
+                await act.update(updatedContent)
                 addToAppLogs("✅ Final stale update sent for \(act.id)")
                 // Try ending immediately after stale update
-                await act.end(content, dismissalPolicy: .immediate)
+                await act.end(updatedContent, dismissalPolicy: .immediate)
                 addToAppLogs("✅ Final end attempt for \(act.id)")
             }
         }
@@ -1075,7 +1080,8 @@ func startActivity(reason: LAStartReason) async {
         
         Task { @MainActor in
             for activity in Activity<PETLLiveActivityAttributes>.activities {
-                await activity.update(using: contentState)
+                let content = ActivityContent(state: contentState, staleDate: nil)
+                await activity.update(content)
             }
             os_log("✅ Live Activity updated with SSOT snapshot data")
         }
