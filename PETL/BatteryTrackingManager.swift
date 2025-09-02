@@ -3,6 +3,7 @@ import Combine
 import UIKit
 import SwiftUI
 import os.log
+import SQLite3
 
 // Import ChargeEstimator for power calculations
 
@@ -15,18 +16,20 @@ struct BatterySnapshot {
 
 // MARK: - Battery Data Point Model
 struct BatteryDataPoint: Codable, Identifiable {
-    let id = UUID()
+    var id: UUID
     let timestamp: Date
     let batteryLevel: Float
     let isCharging: Bool
     
     init(batteryLevel: Float, isCharging: Bool) {
+        self.id = UUID()
         self.timestamp = Date()
         self.batteryLevel = batteryLevel
         self.isCharging = isCharging
     }
     
     init(batteryLevel: Float, isCharging: Bool, timestamp: Date) {
+        self.id = UUID()
         self.timestamp = timestamp
         self.batteryLevel = batteryLevel
         self.isCharging = isCharging
@@ -325,6 +328,7 @@ final class BatteryTrackingManager: ObservableObject {
         
         loadBatteryData()
         setupBatteryMonitoring()
+        restorePendingChargingSessionIfNeeded()
         startContinuousDataRecording()
         
         // Set up single source of truth publisher
@@ -363,6 +367,18 @@ final class BatteryTrackingManager: ObservableObject {
         self.level = UIDevice.current.batteryLevel
         let state = UIDevice.current.batteryState
         self.isCharging = (state == .charging || state == .full)
+
+        // If app starts while already charging, initialize a session baseline
+        if self.isCharging && self.currentSessionStartTime == nil {
+            self.currentSessionStartTime = Date()
+            self.currentSessionStartPercentage = Int(UIDevice.current.batteryLevel * 100)
+            self.addToAppLogs("⚡ Charging session started (app launch) at \(self.currentSessionStartPercentage ?? -1)%")
+            // Initialize power/session pipeline as well
+            self.handleChargeBegan()
+            // Persist pending session so we can recover if the app is killed before unplug
+            UserDefaults.standard.set(self.currentSessionStartTime, forKey: "pendingSessionStartTime")
+            UserDefaults.standard.set(self.currentSessionStartPercentage, forKey: "pendingSessionStartPct")
+        }
 
         // Emit initial snapshot immediately (handles "already plugged in" launch)
         let initial = BatterySnapshot(level: self.level,
@@ -493,7 +509,7 @@ final class BatteryTrackingManager: ObservableObject {
         // Phase 1.8: Enhanced tick log with seconds and dt
         let dt = previousTick?.timeIntervalSince(now) ?? 0
         let dtStr = String(format: "%.1fs", abs(dt))
-        logSec("🕒", String(format:"Tick %@ — sys=%d%% est=%.1f%% src=%@ rate=%.1f%%/min watts=%.1fW eta=%@ dt=%@ paused=%@ reason=%@ thermal=%@ 🎫 t=%@", 
+        logSec("🕒", String(format:"Tick %@ — sys=%d%% est=%.1f%% src=%@ rate=%.1f%%/min watts=%.1fW eta=%@ dt=%@ paused=%@ reason=%@ thermal=%@ 🎫 t=%@",
                            Self.tsFmt.string(from: now),
                            systemPct,
                            out.estPercent,
@@ -591,8 +607,8 @@ final class BatteryTrackingManager: ObservableObject {
             w = lastDisplayed.watts
         }
         
-        let isWarmup = FeatureFlags.smoothChargingAnalytics ? 
-            (ChargeEstimator.shared.current?.isInWarmup ?? false) : 
+        let isWarmup = FeatureFlags.smoothChargingAnalytics ?
+            (ChargeEstimator.shared.current?.isInWarmup ?? false) :
             (lastSmoothedOut?.confidence == .warmup)
 
         if isChargingNow && w.isFinite {
@@ -931,7 +947,7 @@ final class BatteryTrackingManager: ObservableObject {
             addToAppLogs("🛑 Charge end — estimator cleared")
             
             // Update SSOT with unplugged state (ETA will be automatically cleared by store)
-            await self.buildAndApplySnapshot(
+            self.buildAndApplySnapshot(
                 systemPct: Int(self.level * 100),
                 isChargingNow: false,
                 displayW: 0.0,
@@ -940,6 +956,43 @@ final class BatteryTrackingManager: ObservableObject {
                 now: Date()
             )
             addToAppLogs("🧹 ETA cleared in SSOT — unplugged state")
+
+            // Commit charging session on confirmed unplug (debounced)
+            if let start = self.currentSessionStartTime,
+               let startPct = self.currentSessionStartPercentage {
+                let now = Date()
+                let durationSecs = now.timeIntervalSince(start)
+                let endPct = Int(UIDevice.current.batteryLevel * 100)
+
+                // Guardrail: ignore brief/unreal sessions often caused by foreground churn
+                // - Duration < 30s → always ignore
+                // - Duration < 60s AND no SoC gain → ignore (flap)
+                if durationSecs < 30 || (durationSecs < 60 && endPct <= startPct) {
+                    self.addToAppLogs("🧯 Ignored brief unplug flap (debounced) (\(Int(durationSecs))s, \(startPct)%→\(endPct)%)")
+                    // Keep the session open (do not clear start markers)
+                } else {
+                    let session = ChargingSession(
+                        id: UUID(),
+                        startTime: start,
+                        endTime: now,
+                        startPercentage: startPct,
+                        endPercentage: endPct
+                    )
+                    ChargeDB.shared._insertChargingSessionLocked(
+                        id: session.id.uuidString,
+                        startTime: session.startTime,
+                        endTime: session.endTime,
+                        startPercentage: session.startPercentage,
+                        endPercentage: session.endPercentage
+                    )
+                    self.addToAppLogs("📊 (Debounced) session ended: \(session.durationMinutes)m (\(startPct)% → \(endPct)%)")
+                    // Clear pending session markers
+                    self.currentSessionStartTime = nil
+                    self.currentSessionStartPercentage = nil
+                    UserDefaults.standard.removeObject(forKey: "pendingSessionStartTime")
+                    UserDefaults.standard.removeObject(forKey: "pendingSessionStartPct")
+                }
+            }
         }
     }
     
@@ -1140,7 +1193,7 @@ final class BatteryTrackingManager: ObservableObject {
         let d = lastDisplayed
         let etaStr = d.etaMin.map{"\($0)m"} ?? "-"
         let srcStr = lastSmoothedOut?.source == .warmup ? "warmup" : (lastSmoothedOut?.source == .actualStep ? "step" : "interpolated")
-        logSec("⚡", String(format:"Power = %.1fW · eta=%@ · src=%@", 
+        logSec("⚡", String(format:"Power = %.1fW · eta=%@ · src=%@",
                            d.watts,
                            etaStr,
                            srcStr),
@@ -1226,7 +1279,11 @@ final class BatteryTrackingManager: ObservableObject {
             // Only record when charging
             if isCharging {
                 let baseLevel = 0.2 + Float(hour % 8) * 0.1 // Simulate charging progression
-                let dataPoint = BatteryDataPoint(batteryLevel: max(0, min(1, baseLevel)), isCharging: isCharging)
+                let dataPoint = BatteryDataPoint(
+                    batteryLevel: max(0, min(1, baseLevel)),
+                    isCharging: isCharging,
+                    timestamp: timestamp
+                )
                 mockData.append(dataPoint)
             }
         }
@@ -1262,7 +1319,7 @@ final class BatteryTrackingManager: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard self.isCharging != newState else { return }
-            
+
             // Call unplug/replug handlers before state change
             if !newState {
                 // Transitioning to not charging (unplug detected)
@@ -1271,32 +1328,28 @@ final class BatteryTrackingManager: ObservableObject {
                 // Transitioning to charging (replug detected)
                 self.handleReplugDetected()
             }
-            
+
             // Track charging session changes
             let oldChargingState = self.isCharging
             self.isCharging = newState
-            
+
             if newState != oldChargingState {
                 if newState {
                     // Started charging
                     self.currentSessionStartTime = Date()
                     self.currentSessionStartPercentage = Int(UIDevice.current.batteryLevel * 100)
-                } else if let start = self.currentSessionStartTime,
-                          let startPct = self.currentSessionStartPercentage {
-                    // Ended charging - log session (DB persistence will be added later)
-                    let session = ChargingSession(
-                        id: UUID(),
-                        startTime: start,
-                        endTime: Date(),
-                        startPercentage: startPct,
-                        endPercentage: Int(UIDevice.current.batteryLevel * 100)
-                    )
-                    self.addToAppLogs("📊 Charging session ended: \(session.durationMinutes)m (\(session.startPercentage)% → \(session.endPercentage)%)")
-                    self.currentSessionStartTime = nil
-                    self.currentSessionStartPercentage = nil
+                    self.addToAppLogs("⚡ Charging session started at \(self.currentSessionStartPercentage ?? -1)%")
+                    self.addToAppLogs("🛡️ Session start armed with flap guard (<30s, or <60s with no gain)")
+                    // Persist pending session so we can recover if app/background kills before unplug
+                    UserDefaults.standard.set(self.currentSessionStartTime, forKey: "pendingSessionStartTime")
+                    UserDefaults.standard.set(self.currentSessionStartPercentage, forKey: "pendingSessionStartPct")
+                } else if self.currentSessionStartTime != nil {
+                    // Defer committing the session to the unplug debounce (handleUnplugDetected)
+                    // to avoid foreground jiggles creating 0–1m fake sessions.
+                    self.addToAppLogs("⏳ Unplug detected — deferring session end to debounce")
                 }
             }
-            
+
             if newState {
                 self.handleChargeBegan()
             } else {
@@ -1343,6 +1396,42 @@ final class BatteryTrackingManager: ObservableObject {
     
     // Note: Session persistence will be implemented later to avoid stability guardrail issues
     // For now, sessions are logged but not persisted to DB
+
+    // MARK: - Charging Sessions Query (Recent)
+    func fetchRecentChargingSessions(limit: Int = 50, offset: Int = 0) -> [ChargingSession] {
+        return ChargeDB.shared.queryChargingSessions(limit: limit, offset: offset)
+    }
+    // MARK: - Session Recovery After Reboot or Crash
+    func restorePendingChargingSessionIfNeeded() {
+        guard let startTime = UserDefaults.standard.object(forKey: "pendingSessionStartTime") as? Date,
+              let startPct = UserDefaults.standard.object(forKey: "pendingSessionStartPct") as? Int else {
+            return
+        }
+
+        let endTime = Date()
+        let endPct = Int(UIDevice.current.batteryLevel * 100)
+
+        let session = ChargingSession(
+            id: UUID(),
+            startTime: startTime,
+            endTime: endTime,
+            startPercentage: startPct,
+            endPercentage: endPct
+        )
+
+        ChargeDB.shared._insertChargingSessionLocked(
+            id: session.id.uuidString,
+            startTime: session.startTime,
+            endTime: session.endTime,
+            startPercentage: session.startPercentage,
+            endPercentage: session.endPercentage
+        )
+
+        addToAppLogs("🧯 Recovered pending session: \(session.durationMinutes)m (\(startPct)% → \(endPct)%)")
+
+        UserDefaults.standard.removeObject(forKey: "pendingSessionStartTime")
+        UserDefaults.standard.removeObject(forKey: "pendingSessionStartPct")
+    }
 }
 
 extension BatteryTrackingManager {
@@ -1352,4 +1441,4 @@ extension BatteryTrackingManager {
         Self.bgLog.info("📝 BG log — soc=\(soc) watts=\(watts) @\(Date().timeIntervalSince1970)")
         // If you have a history/DB pipeline, append here (source: .push)
     }
-} 
+}
