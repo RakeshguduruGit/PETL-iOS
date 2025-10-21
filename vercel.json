@@ -1,0 +1,9 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/send-silent-push",
+      "schedule": "*/3 * * * *"
+    }
+  ]
+}
+
