@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/send-silent-push",
-      "schedule": "*/10 * * * *"
+      "schedule": "*/3 * * * *"
     }
   ]
 }
