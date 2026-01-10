@@ -85,11 +85,24 @@ export async function GET(request: NextRequest) {
     }
 
     // Filter players with charging:true and la_activity_id tag
+    console.log(`[Cron] Filtering ${allPlayers.length} players for active Live Activities...`);
     const activePlayers = allPlayers.filter((player: any) => {
       const tags = player.tags || {};
       const hasCharging = tags.charging === 'true';
       const hasActivityId = tags.la_activity_id && tags.la_activity_id.trim() !== '';
-      return hasCharging && hasActivityId;
+      const hasPushToken = tags.la_push_token && tags.la_push_token.trim() !== '';
+      
+      // Log filter details for first few players
+      if (allPlayers.indexOf(player) < 3) {
+        console.log(`[Cron] Player ${player.id.substring(0, 8)}... - charging:${hasCharging}, activityId:${hasActivityId}, pushToken:${hasPushToken}`);
+        console.log(`[Cron] Player ${player.id.substring(0, 8)}... tags:`, JSON.stringify({
+          charging: tags.charging,
+          la_activity_id: tags.la_activity_id?.substring(0, 12) || 'MISSING',
+          la_push_token: tags.la_push_token ? `${tags.la_push_token.substring(0, 8)}... (${tags.la_push_token.length} chars)` : 'MISSING'
+        }));
+      }
+      
+      return hasCharging && hasActivityId && hasPushToken;  // Also require push token
     });
 
     console.log(`[SessionStore] Found ${activePlayers.length} active activities (total: ${activePlayers.length})`);
@@ -132,15 +145,21 @@ export async function GET(request: NextRequest) {
       const pushToken = player.tags?.la_push_token;
       
       console.log(`[Cron] Processing player ${player.id.substring(0, 8)}... activityId: ${activityId?.substring(0, 8) || 'MISSING'}... pushToken: ${pushToken ? `${pushToken.substring(0, 8)}... (len: ${pushToken.length})` : 'MISSING'}`);
+      console.log(`[Cron] Player tags available:`, JSON.stringify(Object.keys(player.tags || {})));
+      console.log(`[Cron] la_activity_id tag: ${player.tags?.la_activity_id || 'MISSING'}`);
+      console.log(`[Cron] la_push_token tag: ${player.tags?.la_push_token ? `${player.tags.la_push_token.substring(0, 8)}... (len: ${player.tags.la_push_token.length})` : 'MISSING'}`);
       
-      if (!activityId || !pushToken) {
+      // More strict validation: check for truthy and non-empty string
+      if (!activityId || !activityId.trim() || !pushToken || !pushToken.trim()) {
         console.warn(`[Cron] ⚠️ Player ${player.id.substring(0, 8)}... missing activityId or push_token`);
+        console.warn(`[Cron] activityId: "${activityId}" (length: ${activityId?.length || 0})`);
+        console.warn(`[Cron] pushToken: "${pushToken?.substring(0, 20) || 'MISSING'}" (length: ${pushToken?.length || 0})`);
         console.warn(`[Cron] Player tags:`, JSON.stringify(player.tags || {}, null, 2));
         updateResults.push({
           playerId: player.id,
           activityId: activityId || 'unknown',
           success: false,
-          error: 'Missing activityId or push_token'
+          error: `Missing activityId or push_token (activityId: ${!!activityId}, pushToken: ${!!pushToken})`
         });
         continue;
       }
@@ -155,8 +174,14 @@ export async function GET(request: NextRequest) {
         const url = `https://api.onesignal.com/apps/${ONESIGNAL_APP_ID}/live_activities/${activityId}/notifications`;
         console.log(`[OneSignal update] URL: ${url}`);
         
+        // Verify pushToken exists and is valid before creating payload
+        if (!pushToken || typeof pushToken !== 'string' || pushToken.trim().length === 0) {
+          console.error(`[Cron] ❌ CRITICAL: pushToken is invalid! Value: "${pushToken}", Type: ${typeof pushToken}`);
+          throw new Error(`Invalid push_token: ${pushToken}`);
+        }
+
         const payload: any = {
-          push_token: pushToken,  // ✅ CRITICAL: Include push token!
+          push_token: pushToken.trim(),  // ✅ CRITICAL: Include push token!
           event: 'update',
           name: 'petl-la-update',
           event_updates: {
@@ -168,15 +193,40 @@ export async function GET(request: NextRequest) {
           priority: 5
         };
 
-        // Safety check: Ensure push_token is included
-        if (!payload.push_token) {
-          console.error(`[Cron] ❌ CRITICAL: push_token is missing from payload! pushToken value: ${pushToken}`);
-          throw new Error('push_token is required but missing');
+        // Safety check: Ensure push_token is included and valid
+        if (!payload.push_token || payload.push_token.length < 32) {
+          console.error(`[Cron] ❌ CRITICAL: push_token is missing or invalid in payload!`);
+          console.error(`[Cron] push_token value: "${payload.push_token}", length: ${payload.push_token?.length || 0}`);
+          console.error(`[Cron] Original pushToken: "${pushToken}", length: ${pushToken?.length || 0}`);
+          throw new Error('push_token is required but missing or invalid');
         }
 
-        console.log(`[OneSignal update] Payload keys: ${Object.keys(payload).join(', ')}`);
+        // Verify payload structure before sending
+        const payloadKeys = Object.keys(payload);
+        const hasPushToken = 'push_token' in payload && payload.push_token && payload.push_token.length > 0;
+        
+        console.log(`[OneSignal update] Payload keys: ${payloadKeys.join(', ')}`);
+        console.log(`[OneSignal update] Payload has push_token key: ${'push_token' in payload}`);
+        console.log(`[OneSignal update] Payload push_token present: ${hasPushToken}`);
         console.log(`[OneSignal update] Payload push_token length: ${payload.push_token?.length || 0}`);
-        console.log(`[OneSignal update] Payload: ${JSON.stringify(payload)}`);
+        
+        if (!hasPushToken) {
+          console.error(`[Cron] ❌ CRITICAL ERROR: push_token is MISSING from payload object!`);
+          console.error(`[Cron] Payload object:`, JSON.stringify(payload, null, 2));
+          console.error(`[Cron] pushToken variable:`, pushToken);
+          throw new Error('push_token is missing from payload - this should never happen');
+        }
+
+        // Serialize payload to verify it includes push_token
+        const serializedPayload = JSON.stringify(payload);
+        const parsedPayload = JSON.parse(serializedPayload);
+        if (!parsedPayload.push_token) {
+          console.error(`[Cron] ❌ CRITICAL: push_token lost during JSON serialization!`);
+          throw new Error('push_token lost during JSON serialization');
+        }
+        
+        console.log(`[OneSignal update] ✅ Payload verified - push_token present (length: ${payload.push_token.length})`);
+        console.log(`[OneSignal update] Payload preview (first 200 chars): ${serializedPayload.substring(0, 200)}...`);
 
         const response = await fetch(url, {
           method: 'POST',
@@ -184,7 +234,7 @@ export async function GET(request: NextRequest) {
             'Content-Type': 'application/json',
             'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`
           },
-          body: JSON.stringify(payload)
+          body: serializedPayload  // Use pre-serialized payload to ensure push_token is included
         });
 
         const result = await response.json();
