@@ -68,6 +68,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Remove activity_id tag from player (if we have playerId in meta)
+    const playerId = meta?.playerId;
+    if (playerId) {
+      try {
+        const tagResponse = await fetch(
+          `https://api.onesignal.com/apps/${ONESIGNAL_APP_ID}/players/${playerId}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`
+            },
+            body: JSON.stringify({
+              tags: {
+                la_activity_id: '',  // Empty string removes the tag
+                la_push_token: '',   // Remove push token too
+                charging: 'false'    // Remove charging tag
+              }
+            })
+          }
+        );
+
+        if (!tagResponse.ok) {
+          const tagError = await tagResponse.json();
+          console.error('[LA/END] Failed to remove activity_id tag:', tagError);
+          // Don't fail the request if tag removal fails
+        } else {
+          console.log(`[LA/END] Removed activity_id tag for player ${playerId}`);
+        }
+      } catch (tagError) {
+        console.error('[LA/END] Error removing activity_id tag:', tagError);
+        // Continue - Live Activity end succeeded
+      }
+    }
+
     return NextResponse.json({
       success: true,
       activityId,

@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/cron/send-silent-push",
+      "path": "/api/cron/update-live-activities",
       "schedule": "*/3 * * * *"
     }
   ]

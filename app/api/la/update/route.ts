@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     const { activityId, contentState, ttlSeconds, meta } = body;
 
     console.log(`[LA/UPDATE] ✅ Valid request - activityId: ${activityId?.substring(0, 8)}..., soc: ${contentState?.soc}, watts: ${contentState?.watts}, eta: ${contentState?.timeToFullMinutes}, playerId: ${meta?.playerId?.substring(0, 8)}...`);
+    console.log(`[LA/UPDATE] Activity ID format: ${activityId}`);
 
     if (!activityId || !contentState) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -109,6 +110,9 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       console.error('[LA/UPDATE] ❌ OneSignal API error:', JSON.stringify(result, null, 2));
+      console.error('[LA/UPDATE] Response status:', response.status);
+      console.error('[LA/UPDATE] Push token length:', pushToken?.length || 0);
+      console.error('[LA/UPDATE] Activity ID:', activityId);
       return NextResponse.json(
         { error: 'OneSignal API error', details: result },
         { status: response.status }
@@ -116,6 +120,7 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[LA/UPDATE] ✅ OneSignal API success - update delivered`);
+    console.log(`[LA/UPDATE] OneSignal response:`, JSON.stringify(result, null, 2));
 
     // Store last known values in player tags so cron job can use them
     if (playerId) {
